@@ -1,0 +1,6 @@
+{
+  "build": "docker build -t middleware-itau-odoo .",
+  "up": "docker run -p 3000:3000 --env-file .env middleware-itau-odoo",
+  "start": "node server.js",
+  "dev": "nodemon server.js"
+}
