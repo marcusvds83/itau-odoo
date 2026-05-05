@@ -425,7 +425,7 @@ router.get('/boleto/:id/pdf', async (req, res) => {
 });
 
 // =============================================
-// ENDPOINT UNIVERSAL: /api/pagar (v3.0)
+// ENDPOINT UNIVERSAL: /api/pagar (v4.0)
 // =============================================
 // Roteia automaticamente baseado na forma de pagamento
 

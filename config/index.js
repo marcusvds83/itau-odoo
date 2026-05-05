@@ -10,7 +10,7 @@ const config = {
   ambiente: process.env.AMBIENTE || 'sandbox',
   port: parseInt(process.env.PORT) || 3000,
   apiSecretKey: process.env.API_SECRET_KEY || 'changeme',
-  mockMode: process.env.MOCK_MODE === 'true',
+  mockMode: process.env.MOCK_MODE !== 'false',
 
   // URLs dinamicas baseadas no ambiente
   get itauBaseUrl() {
