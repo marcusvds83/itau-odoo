@@ -45,7 +45,7 @@ const config = {
   },
 
   get itauPixUrl() {
-    return process.env.ITAU_PIX_URL || 'https://secure.api.itau/pix_recebimentos/v2';
+    return process.env.ITAU_PIX_URL || 'https://api.itau.com.br/pix_recebimentos';
   },
 
   // BoleCode API (boletos com PIX)
