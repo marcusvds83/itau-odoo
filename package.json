@@ -1,7 +1,7 @@
 {
   "name": "middleware-itau-odoo",
-  "version": "4.0.0",
-  "description": "Middleware de integracao entre Odoo 19 SaaS e APIs do Itau (Boleto, PIX, Cartao)",
+  "version": "5.0.0",
+  "description": "Middleware de integracao entre Odoo 19 SaaS e APIs do Itau (Boleto, PIX, Cartao) - v5 Producao",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -15,7 +15,6 @@
     "morgan": "^1.10.0",
     "helmet": "^7.1.0",
     "express-rate-limit": "^7.1.4",
-    "xmlrpc": "^1.3.2",
     "uuid": "^9.0.0",
     "dayjs": "^1.11.10"
   },

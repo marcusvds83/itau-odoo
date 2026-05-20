@@ -1,31 +1,29 @@
 // ============================================
-// SERVICO DE INTEGRACAO API PIX ITAU
+// SERVICO DE INTEGRACAO API PIX ITAU v5.0
 // ============================================
-// Criacao de cobranca PIX, consulta e devolucao
-// Segue especificacao BACEN
+// Criacao de cobranca PIX - Especificacao BACEN
+// v5: Usa token real do Itau
 
-const axios = require('axios');
+const { callPix } = require('./itau-api');
 const config = require('../config');
-const { getAuthHeaders } = require('./itau-auth');
 const logger = require('../utils/logger');
+const uuid = require('uuid');
 
 /**
- * Emite cobranca PIX no Itau
- * @param {Object} pixData - Dados da cobranca PIX
- * @returns {Promise<Object>} Resposta com dados da cobranca
+ * Cria cobranca PIX (PUT /v2/cob/{txid})
  */
 async function criarCobrancaPix(pixData) {
   logger.info('Criando cobranca PIX...');
+  var txid = pixData.txid || gerarTxid(pixData);
+  var headers = null; // callPix ja adiciona headers automaticamente
 
-  const headers = await getAuthHeaders();
-
-  const payload = {
+  var payload = {
     calendario: {
       criacao: new Date().toISOString(),
-      expiracao: pixData.expiracao || 3600, // Default: 1 hora
+      expiracao: pixData.expiracao || 3600,
     },
     valor: {
-      original: pixData.valor.toFixed(2),
+      original: (pixData.valor || 0).toFixed(2),
       modalidadeAlteracao: pixData.modalidadeAlteracao || null,
     },
     chave: pixData.chave || config.itau.pixChave,
@@ -35,140 +33,101 @@ async function criarCobrancaPix(pixData) {
       nome: pixData.devedor.nome,
     } : undefined,
     infoAdicionais: pixData.infoAdicionais || [],
-    solicitaPagador: pixData.solicitaPagador || false,
+    solicitacaoPagador: pixData.solicitacaoPagador || false,
   };
 
-  const endpoint = pixData.txid
-    ? `/v2/cob/${pixData.txid}`
-    : '/v2/cob';
-
-  const baseUrl = config.itauPixUrl;
+  // Remove campos undefined
+  if (payload.valor.modalidadeAlteracao === null) delete payload.valor.modalidadeAlteracao;
 
   try {
-    let response;
-
-    if (pixData.txid) {
-      // PUT - Atualizar cobranca existente
-      response = await axios.put(`${baseUrl}${endpoint}`, payload, { headers, timeout: 30000 });
-    } else {
-      // PUT - Criar cobranca (Itau usa PUT com txid gerado)
-      const txid = gerarTxid(pixData);
-      response = await axios.put(`${baseUrl}/v2/cob/${txid}`, payload, { headers, timeout: 30000 });
-    }
-
-    logger.info(`Cobranca PIX criada: ${response.data?.txid || 'sem txid'}`);
-    return response.data;
-
+    var resultado = await callPix('PUT', '/v2/cob/' + txid, payload);
+    logger.info('Cobranca PIX criada: ' + (resultado.txid || 'sem txid'));
+    return resultado;
   } catch (error) {
-    const status = error.response?.status;
-    const errData = error.response?.data;
-    logger.error(`Falha ao criar cobranca PIX: ${status} - ${JSON.stringify(errData)}`);
+    var status = error.response?.status;
+    var errData = error.response?.data;
+    logger.error('Falha ao criar cobranca PIX: ' + status + ' - ' + JSON.stringify(errData));
     throw {
-      status: status || 502,
-      message: errData?.mensagem || 'Erro ao criar cobranca PIX',
+      status: status || error.status || 502,
+      message: errData?.mensagem || error.message || 'Erro ao criar cobranca PIX',
       detail: errData,
     };
   }
 }
 
 /**
- * Consulta cobranca PIX pelo txid
+ * Consulta cobranca PIX
  */
 async function consultarCobrancaPix(txid) {
-  logger.info(`Consultando cobranca PIX ${txid}...`);
-
-  const headers = await getAuthHeaders();
-  const baseUrl = config.itauPixUrl;
-
-  const response = await axios.get(`${baseUrl}/v2/cob/${txid}`, { headers, timeout: 30000 });
-  return response.data;
-}
-
-/**
- * Gera um txid unico para a transacao PIX
- * Formato: 26 caracteres alfanumericos (BACEN)
- * Sugestao: uso do ID do Odoo + timestamp
- */
-function gerarTxid(pixData) {
-  const { v4: uuidv4 } = require('uuid');
-  // Remove hifens do UUID para obter 32 chars, pega os primeiros 26
-  const txid = uuidv4().replace(/-/g, '').substring(0, 26).toUpperCase();
-  return txid;
-}
-
-/**
- * Consulta PIX recebido pelo e2eId
- */
-async function consultarPixRecebido(e2eId) {
-  logger.info(`Consultando PIX recebido ${e2eId}...`);
-
-  const headers = await getAuthHeaders();
-  const baseUrl = config.itauPixUrl;
-
-  const response = await axios.get(`${baseUrl}/v2/pix/${e2eId}`, { headers, timeout: 30000 });
-  return response.data;
-}
-
-/**
- * Solicita devolucao de um PIX
- */
-async function devolverPix(e2eId, devolucaoData) {
-  logger.info(`Solicitando devolucao PIX ${e2eId}...`);
-
-  const headers = await getAuthHeaders();
-  const baseUrl = config.itauPixUrl;
-
-  const payload = {
-    valor: devolucaoData.valor.toFixed(2),
-  };
-
-  const response = await axios.put(
-    `${baseUrl}/v2/pix/${e2eId}/devolucao/${devolucaoData.idDevolucao}`,
-    payload,
-    { headers, timeout: 30000 }
-  );
-
-  logger.info(`Devolucao PIX solicitada: ${devolucaoData.idDevolucao}`);
-  return response.data;
-}
-
-/**
- * Consulta webhook de PIX configurado
- */
-async function consultarWebhookPix(chave) {
-  logger.info(`Consultando webhook PIX para chave ${chave}...`);
-
-  const headers = await getAuthHeaders();
-  const baseUrl = config.itauPixUrl;
-
+  logger.info('Consultando cobranca PIX ' + txid + '...');
   try {
-    const response = await axios.get(`${baseUrl}/v2/webhook/${chave}`, { headers, timeout: 30000 });
-    return response.data;
+    var resultado = await callPix('GET', '/v2/cob/' + txid);
+    return resultado;
   } catch (error) {
-    if (error.response?.status === 404) {
-      return null; // Webhook nao configurado
-    }
-    throw error;
+    throw {
+      status: error.status || 502,
+      message: 'Erro ao consultar PIX: ' + error.message,
+      detail: error.detail,
+    };
   }
 }
 
 /**
- * Configura webhook para receber notificacoes PIX
+ * Gera TXID unico para a cobranca PIX
+ */
+function gerarTxid(pixData) {
+  // TXID: ate 26 caracteres, alfanumerico
+  var txid = uuid.v4().replace(/-/g, '').substring(0, 26).toUpperCase();
+  return txid;
+}
+
+/**
+ * Consulta PIX recebido por e2eId
+ */
+async function consultarPixRecebido(e2eId) {
+  logger.info('Consultando PIX recebido ' + e2eId + '...');
+  try {
+    var resultado = await callPix('GET', '/v2/pix/' + e2eId);
+    return resultado;
+  } catch (error) {
+    throw {
+      status: error.status || 502,
+      message: 'Erro ao consultar PIX recebido: ' + error.message,
+      detail: error.detail,
+    };
+  }
+}
+
+/**
+ * Configura webhook PIX
  */
 async function configurarWebhookPix(chave, webhookUrl) {
-  logger.info(`Configurando webhook PIX: ${webhookUrl}`);
+  logger.info('Configurando webhook PIX: ' + webhookUrl);
+  try {
+    var resultado = await callPix('PUT', '/v2/webhook/' + chave, { webhookUrl: webhookUrl });
+    logger.info('Webhook PIX configurado com sucesso');
+    return resultado;
+  } catch (error) {
+    throw {
+      status: error.status || 502,
+      message: 'Erro ao configurar webhook PIX: ' + error.message,
+      detail: error.detail,
+    };
+  }
+}
 
-  const headers = await getAuthHeaders();
-  const baseUrl = config.itauPixUrl;
-
-  const response = await axios.put(
-    `${baseUrl}/v2/webhook/${chave}`,
-    { webhookUrl },
-    { headers, timeout: 30000 }
-  );
-
-  logger.info('Webhook PIX configurado com sucesso');
-  return response.data;
+/**
+ * Consulta webhook PIX configurado
+ */
+async function consultarWebhookPix(chave) {
+  logger.info('Consultando webhook PIX para chave ' + chave + '...');
+  try {
+    var resultado = await callPix('GET', '/v2/webhook/' + chave);
+    return resultado;
+  } catch (error) {
+    if (error.status === 404) return null;
+    throw error;
+  }
 }
 
 module.exports = {
@@ -176,7 +135,6 @@ module.exports = {
   consultarCobrancaPix,
   gerarTxid,
   consultarPixRecebido,
-  devolverPix,
-  consultarWebhookPix,
   configurarWebhookPix,
+  consultarWebhookPix,
 };

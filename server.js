@@ -1,10 +1,10 @@
 // ============================================
-// SERVER.JS - Aplicacao Principal
+// SERVER.JS - Middleware Itau-Odoo v5.0
 // ============================================
-// Middleware de integracao entre Odoo 19 SaaS e Itau
-// Tecnologias: Node.js + Express + Axios
-// Deploy: Render.com (free tier)
-// v4.0: PDF via URL em vez de base64
+// Integracao real com APIs do Itau
+// Suporta: Token temporario, OAuth2, mTLS
+// Mock mode: MOCK_MODE=true (padrao para sandbox)
+// Producao: MOCK_MODE=false + credenciais reais
 
 const express = require('express');
 const cors = require('cors');
@@ -15,28 +15,21 @@ const config = require('./config');
 const logger = require('./utils/logger');
 const dayjs = require('dayjs');
 
-// Inicializa Express
-const app = express();
+var app = express();
 
 // =============================================
 // MIDDLEWARES
 // =============================================
 
-app.use(helmet({
-  contentSecurityPolicy: false,
-}));
+app.use(helmet({ contentSecurityPolicy: false }));
 
 app.use(cors({
-  origin: function (origin, callback) {
+  origin: function(origin, callback) {
     if (!origin) return callback(null, true);
-    const allowedOrigins = [
-      /.*\.odoo\.com$/,
-      /.*\.odoo\.com\.br$/,
-    ];
-    if (allowedOrigins.some(regex => regex.test(origin))) {
-      return callback(null, true);
-    }
-    return callback(null, true);
+    // Odoo SaaS domains
+    var allowed = [/.*\.odoo\.com$/, /.*\.odoo\.com\.br$/];
+    if (allowed.some(function(r) { return r.test(origin); })) return callback(null, true);
+    return callback(null, true); // Permite qualquer origem durante teste
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-itau-signature'],
@@ -46,21 +39,12 @@ app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('combined'));
 
-const limiter = rateLimit({
+var limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
   message: { success: false, message: 'Muitas requisicoes. Tente novamente em 15 minutos.' },
-  standardHeaders: true,
-  legacyHeaders: false,
 });
 app.use('/api/', limiter);
-
-const strictLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 50,
-});
-app.use('/api/cartao/', strictLimiter);
-app.use('/api/pix/', strictLimiter);
 
 // =============================================
 // ROTAS
@@ -71,24 +55,21 @@ app.use('/api', require('./routes/odoo'));
 app.use('/webhook', require('./routes/webhook'));
 
 // =============================================
-// PDF PUBLICO - v4.0
+// PDF PUBLICO DO BOLETO
 // =============================================
-// Serve PDF do boleto diretamente no navegador
-// Em mock mode gera PDF simulado
-// Em producao busca do Itau
 
-app.get('/boleto/:id/pdf', async (req, res) => {
+app.get('/boleto/:id/pdf', async function(req, res) {
   try {
     var id = req.params.id;
     var pdfBase64;
 
     if (config.mockMode) {
-      // Gerar PDF mock on-the-fly
       var content = '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n';
       content += '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n';
       content += '3 0 obj\n<< /Type /Page /MediaBox [0 0 612 792] /Parent 2 0 R /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n';
-      content += '4 0 obj\n<< /Length 180 >>\nstream\n';
-      content += 'BT\n/F1 18 Tf\n72 700 Td\n(AJL Representacoes) Tj\n0 -30 Td\n(Itau-Odoo v4.0 - MOCK) Tj\n';
+      content += '4 0 obj\n<< /Length 200 >>\nstream\n';
+      content += 'BT\n/F1 18 Tf\n72 700 Td\n(AJL Ferro e Aco) Tj\n0 -30 Td\n(Curitiba - PR) Tj\n';
+      content += '0 -30 Td\n(Itau-Odoo v5.0 - MOCK) Tj\n';
       content += '0 -30 Td\n(Boleto: ' + id + ') Tj\n';
       content += '0 -30 Td\n(Data: ' + dayjs().format('DD/MM/YYYY HH:mm') + ') Tj\n';
       content += '0 -30 Td\n(Documento simulado - nao utilizar para pagamento real) Tj\n';
@@ -98,7 +79,6 @@ app.get('/boleto/:id/pdf', async (req, res) => {
       content += 'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n623\n%%EOF';
       pdfBase64 = Buffer.from(content).toString('base64');
     } else {
-      // Producao: buscar PDF do Itau
       var boletoService = require('./services/itau-boleto');
       var resultado = await boletoService.obterPdfBoleto(id);
       pdfBase64 = resultado.pdf_base64;
@@ -122,7 +102,7 @@ app.get('/boleto/:id/pdf', async (req, res) => {
 // ERROR HANDLER
 // =============================================
 
-app.use((err, req, res, next) => {
+app.use(function(err, req, res, next) {
   logger.error('Erro nao tratado: ' + err.message, { stack: err.stack });
   res.status(500).json({
     success: false,
@@ -135,43 +115,44 @@ app.use((err, req, res, next) => {
 // INICIALIZACAO
 // =============================================
 
-const PORT = config.port;
+var PORT = config.port;
 
-app.listen(PORT, () => {
+app.listen(PORT, function() {
   logger.info('='.repeat(60));
-  logger.info('  Middleware Itau-Odoo v4.0.0' + (config.mockMode ? ' [MOCK MODE]' : ''));
-  logger.info(`  Ambiente: ${config.ambiente}`);
-  logger.info(`  Porta: ${PORT}`);
-  logger.info(`  URL: http://localhost:${PORT}`);
+  logger.info('  Middleware Itau-Odoo v5.0.0' + (config.mockMode ? ' [MOCK MODE]' : ' [PRODUCAO]'));
+  logger.info('  Empresa: AJL Ferro e Aco - Curitiba/PR');
+  logger.info('  Ambiente: ' + config.ambiente);
+  logger.info('  Porta: ' + PORT);
   logger.info('='.repeat(60));
-  logger.info('Endpoints disponiveis:');
+
+  // Diagnostico de credenciais
+  logger.info('Credenciais Itau:');
+  logger.info('  Client ID: ' + (config.itau.clientId ? '***' + config.itau.clientId.slice(-4) : 'NAO'));
+  logger.info('  Temp Token: ' + (config.itau.tempToken ? 'SIM' : 'NAO'));
+  logger.info('  Client Secret: ' + (config.itau.clientSecret ? 'SIM' : 'NAO'));
+  logger.info('  PIX Chave: ' + (config.itau.pixChave || 'NAO'));
+  logger.info('  mTLS: ' + (config.hasMtls ? 'SIM' : 'NAO'));
+
+  logger.info('Endpoints:');
   logger.info('  GET  /                       - Info da API');
-  logger.info('  GET  /health                 - Status dos servicos');
-  logger.info('  GET  /boleto/:id/pdf         - PDF do boleto (download)');
-  logger.info('  POST /api/boleto/emitir      - Emitir boleto');
-  logger.info('  POST /api/boleto/emitir-pdf  - Emitir boleto + PDF');
-  logger.info('  GET  /api/boleto/consultar   - Consultar boletos');
-  logger.info('  GET  /api/boleto/:id/pdf     - PDF do boleto (JSON)');
-  logger.info('  POST /api/boleto/:id/baixa   - Baixar boleto');
-  logger.info('  POST /api/pix/criar          - Criar cobranca PIX');
-  logger.info('  GET  /api/pix/consultar/:txid- Consultar PIX');
-  logger.info('  POST /api/link/criar         - Criar link de pagamento');
-  logger.info('  POST /api/link/criar-com-pdf - Criar link + boleto com PDF');
-  logger.info('  GET  /api/link/consultar/:id - Consultar link de pagamento');
-  logger.info('  GET  /api/pagar/metodos      - Listar formas de pagamento');
+  logger.info('  GET  /health                 - Status completo');
+  logger.info('  GET  /boleto/:id/pdf         - PDF do boleto');
   logger.info('  POST /api/pagar              - Pagar (roteador universal)');
-  logger.info('  POST /webhook/boleto         - Webhook boleto pago');
-  logger.info('  POST /webhook/pix            - Webhook PIX recebido');
-  logger.info('  POST /webhook/link           - Webhook link de pagamento');
+  logger.info('  GET  /api/pagar/metodos      - Formas de pagamento');
+  logger.info('  GET  /api/status/credenciais - Status das credenciais');
+  logger.info('  POST /api/pix/criar          - Criar cobranca PIX');
+  logger.info('  POST /api/boleto/emitir      - Emitir boleto');
+  logger.info('  POST /webhook/pix            - Webhook PIX');
+  logger.info('  POST /webhook/boleto         - Webhook Boleto');
   logger.info('='.repeat(60));
 });
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', function() {
   logger.info('SIGTERM recebido. Encerrando servidor...');
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', function() {
   logger.info('SIGINT recebido. Encerrando servidor...');
   process.exit(0);
 });
