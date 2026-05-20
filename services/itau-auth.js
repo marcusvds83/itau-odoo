@@ -52,40 +52,35 @@ async function getToken() {
     if (config.itau.tempToken) {
       logger.info('Usando TOKEN TEMPORARIO do Itau (JWT)...');
 
-      // O token JWT do Itau contem o Access_Token no payload
-      // Decodificamos para extrair o access_token real
+      // O token JWT do Itau deve ser enviado INTEIRO como Bearer token
+      // Ele ja contem o Access_Token no payload internamente
+      // Decodificamos apenas para log e saber a data de expiracao
       var parts = config.itau.tempToken.split('.');
       if (parts.length === 3) {
-        // Decodifica o payload do JWT (base64url)
-        var payload = Buffer.from(parts[1], 'base64').toString('utf8');
         try {
+          var payload = Buffer.from(parts[1], 'base64').toString('utf8');
           var jwtPayload = JSON.parse(payload);
-          var accessToken = jwtPayload.Access_Token || jwtPayload.access_token;
+          tokenCache.expiresAt = (jwtPayload.exp || 0) * 1000;
+          tokenCache.source = 'temp_jwt';
 
-          if (accessToken) {
-            // O Access_Token dentro do JWT e o token real para a API
-            tokenCache.accessToken = accessToken;
-            tokenCache.expiresAt = (jwtPayload.exp || 0) * 1000;
-            tokenCache.source = 'temp_jwt';
-            tokenCache.isLoading = false;
-
-            logger.info('Access_Token extraido do JWT. Expira em: ' +
-              new Date(tokenCache.expiresAt).toISOString());
-            return accessToken;
-          }
+          logger.info('JWT decodificado. Expira em: ' +
+            new Date(tokenCache.expiresAt).toISOString() +
+            ' | sub: ' + (jwtPayload.sub || 'N/A') +
+            ' | tem Access_Token: ' + !!(jwtPayload.Access_Token));
         } catch (parseErr) {
           logger.warn('Nao conseguiu decodificar JWT payload: ' + parseErr.message);
+          tokenCache.source = 'temp_raw';
         }
       }
 
-      // Fallback: usa o JWT inteiro como Bearer token
+      // USA O JWT COMPLETO como Bearer token
       tokenCache.accessToken = config.itau.tempToken;
-      // Tokens JWT tipicos expiram em 7 dias
-      tokenCache.expiresAt = now + (7 * 24 * 60 * 60 * 1000);
-      tokenCache.source = 'temp_raw';
+      if (!tokenCache.expiresAt) {
+        tokenCache.expiresAt = now + (7 * 24 * 60 * 60 * 1000);
+      }
       tokenCache.isLoading = false;
 
-      logger.info('Token temporario configurado (JWT bruto como Bearer)');
+      logger.info('Token temporario JWT configurado (token inteiro como Bearer)');
       return config.itau.tempToken;
     }
 
