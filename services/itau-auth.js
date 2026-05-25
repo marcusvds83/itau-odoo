@@ -1,5 +1,4 @@
 const axios = require('axios');
-const https = require('https');
 const config = require('../config');
 const logger = require('../utils/logger');
 
@@ -9,27 +8,6 @@ let tokenCache = {
   isLoading: false,
   source: null,
 };
-
-function createMtlsClient() {
-  var clientConfig = { timeout: 30000 };
-  if (config.hasMtls) {
-    var certContent = null;
-    var keyContent = null;
-    if (config.certificados.crt && config.certificados.key) {
-      certContent = Buffer.from(config.certificados.crt, 'utf8');
-      keyContent = Buffer.from(config.certificados.key, 'utf8');
-    }
-    if (certContent && keyContent) {
-      clientConfig.httpsAgent = new https.Agent({
-        cert: certContent,
-        key: keyContent,
-        rejectUnauthorized: false,
-      });
-      logger.info('mTLS ativo para OAuth2');
-    }
-  }
-  return axios.create(clientConfig);
-}
 
 async function getToken() {
   const now = Date.now();
@@ -44,11 +22,10 @@ async function getToken() {
   tokenCache.isLoading = true;
   try {
     if (config.itau.clientId && config.itau.clientSecret) {
-      logger.info('Solicitando token via OAuth2 + mTLS...');
+      logger.info('Solicitando token via OAuth2 (client_credentials)...');
       var params = new URLSearchParams();
       params.append('grant_type', 'client_credentials');
-      var client = createMtlsClient();
-      var response = await client.post(config.itauTokenUrl, params, {
+      var response = await axios.post(config.itauTokenUrl, params, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         auth: { username: config.itau.clientId, password: config.itau.clientSecret },
         timeout: 30000,
@@ -59,7 +36,7 @@ async function getToken() {
       tokenCache.expiresAt = now + (data.expires_in * 1000);
       tokenCache.source = 'oauth2';
       tokenCache.isLoading = false;
-      logger.info('Token OAuth2 obtido! Expira em ' + data.expires_in + 's');
+      logger.info('Token OAuth2 obtido! Expira em ' + data.expires_in + 's | Scope: ' + (data.scope || 'N/A'));
       return data.access_token;
     }
     if (config.itau.tempToken) {
