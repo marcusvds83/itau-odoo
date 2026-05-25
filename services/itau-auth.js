@@ -1,45 +1,32 @@
 // ============================================
-// SERVICO DE AUTENTICACAO ITAU v5.0
+// SERVICO DE AUTENTICACAO ITAU v5.2
 // ============================================
-// Modo 1: Token temporario JWT (ITAU_TEMP_TOKEN)
-// Modo 2: OAuth2 (Client ID + Client Secret)
-// Modo 3: Mock (sandbox)
-//
-// O token temporario e um JWT completo que serve
-// como Bearer token nas chamadas a API.
+// v5.2: OAuth2 tem prioridade quando Client Secret disponivel
+// O JWT temporario so tem scope "certificado.write"
+// Para boletos precisa de token OAuth2 com scope correto
 
 const axios = require('axios');
 const config = require('../config');
 const logger = require('../utils/logger');
 
-// Cache do token
 let tokenCache = {
   accessToken: null,
   expiresAt: null,
   isLoading: false,
-  source: null, // 'temp', 'oauth2'
+  source: null,
 };
 
-/**
- * Obtem um token de acesso valido do Itau
- * Estrategia:
- *   1. Se ITAU_TEMP_TOKEN esta setado -> usa direto (JWT)
- *   2. Se Client ID + Secret -> OAuth2
- *   3. Se mock -> retorna token fake
- */
 async function getToken() {
   const now = Date.now();
 
-  // Retorna token em cache se ainda valido (com margem de 60s)
   if (tokenCache.accessToken && tokenCache.expiresAt && now < tokenCache.expiresAt - 60000) {
-    logger.debug('Token obtido do cache (fonte: ' + tokenCache.source + ')');
+    logger.debug('Token do cache (fonte: ' + tokenCache.source + ')');
     return tokenCache.accessToken;
   }
 
-  // Evita multiplas requisicoes simultaneas
   if (tokenCache.isLoading) {
     logger.debug('Aguardando token em andamento...');
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(function(resolve) { setTimeout(resolve, 500); });
     return getToken();
   }
 
@@ -47,46 +34,9 @@ async function getToken() {
 
   try {
     // =============================================
-    // MODO 1: TOKEN TEMPORARIO (JWT direto)
+    // PRIORIDADE 1: OAuth2 (Client ID + Secret)
     // =============================================
-    if (config.itau.tempToken) {
-      logger.info('Usando TOKEN TEMPORARIO do Itau (JWT)...');
-
-      // O token JWT do Itau deve ser enviado INTEIRO como Bearer token
-      // Ele ja contem o Access_Token no payload internamente
-      // Decodificamos apenas para log e saber a data de expiracao
-      var parts = config.itau.tempToken.split('.');
-      if (parts.length === 3) {
-        try {
-          var payload = Buffer.from(parts[1], 'base64').toString('utf8');
-          var jwtPayload = JSON.parse(payload);
-          tokenCache.expiresAt = (jwtPayload.exp || 0) * 1000;
-          tokenCache.source = 'temp_jwt';
-
-          logger.info('JWT decodificado. Expira em: ' +
-            new Date(tokenCache.expiresAt).toISOString() +
-            ' | sub: ' + (jwtPayload.sub || 'N/A') +
-            ' | tem Access_Token: ' + !!(jwtPayload.Access_Token));
-        } catch (parseErr) {
-          logger.warn('Nao conseguiu decodificar JWT payload: ' + parseErr.message);
-          tokenCache.source = 'temp_raw';
-        }
-      }
-
-      // USA O JWT COMPLETO como Bearer token
-      tokenCache.accessToken = config.itau.tempToken;
-      if (!tokenCache.expiresAt) {
-        tokenCache.expiresAt = now + (7 * 24 * 60 * 60 * 1000);
-      }
-      tokenCache.isLoading = false;
-
-      logger.info('Token temporario JWT configurado (token inteiro como Bearer)');
-      return config.itau.tempToken;
-    }
-
-    // =============================================
-    // MODO 2: OAUTH2 (Client ID + Client Secret)
-    // =============================================
+    // Gera token com scope correto para boletos/PIX
     if (config.itau.clientId && config.itau.clientSecret) {
       logger.info('Solicitando token via OAuth2 (Client Credentials)...');
 
@@ -94,9 +44,7 @@ async function getToken() {
       params.append('grant_type', 'client_credentials');
 
       var response = await axios.post(config.itauTokenUrl, params, {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         auth: {
           username: config.itau.clientId,
           password: config.itau.clientSecret,
@@ -114,24 +62,53 @@ async function getToken() {
       tokenCache.source = 'oauth2';
       tokenCache.isLoading = false;
 
-      logger.info('Token OAuth2 obtido com sucesso. Expira em ' + data.expires_in + 's');
+      logger.info('Token OAuth2 obtido com sucesso! Expira em ' + data.expires_in + 's');
+      logger.info('Scope do token: ' + (data.scope || 'N/A'));
       return data.access_token;
     }
 
     // =============================================
-    // MODO 3: SEM CREDENCIAIS
+    // PRIORIDADE 2: Token Temporario (JWT)
     // =============================================
-    throw new Error(
-      'Nenhuma credencial Itau configurada. Defina ITAU_TEMP_TOKEN ou (ITAU_CLIENT_ID + ITAU_CLIENT_SECRET).'
-    );
+    // ATENCAO: JWT temporario geralmente tem scope
+    // "certificado.write" apenas - NAO serve para boletos!
+    if (config.itau.tempToken) {
+      logger.warn('Usando TOKEN TEMPORARIO (JWT) - scope pode ser limitada!');
+
+      var parts = config.itau.tempToken.split('.');
+      if (parts.length === 3) {
+        try {
+          var payload = Buffer.from(parts[1], 'base64').toString('utf8');
+          var jwtPayload = JSON.parse(payload);
+          tokenCache.expiresAt = (jwtPayload.exp || 0) * 1000;
+          tokenCache.source = 'temp_jwt';
+
+          logger.info('JWT scope: ' + (jwtPayload.scope || 'N/A') + ' | expira: ' + new Date(tokenCache.expiresAt).toISOString());
+
+          if (jwtPayload.scope && jwtPayload.scope.indexOf('certificado') >= 0 && jwtPayload.scope.indexOf('boleto') < 0) {
+            logger.warn('ATENCAO: JWT scope (' + jwtPayload.scope + ') provavelmente NAO inclui boletos! Configure ITAU_CLIENT_SECRET para OAuth2.');
+          }
+        } catch (parseErr) {
+          logger.warn('Nao conseguiu decodificar JWT: ' + parseErr.message);
+          tokenCache.source = 'temp_raw';
+        }
+      }
+
+      tokenCache.accessToken = config.itau.tempToken;
+      if (!tokenCache.expiresAt) {
+        tokenCache.expiresAt = now + (7 * 24 * 60 * 60 * 1000);
+      }
+      tokenCache.isLoading = false;
+      return config.itau.tempToken;
+    }
+
+    // =============================================
+    // SEM CREDENCIAIS
+    // =============================================
+    throw new Error('Nenhuma credencial Itau configurada. Defina (ITAU_CLIENT_ID + ITAU_CLIENT_SECRET) ou ITAU_TEMP_TOKEN.');
 
   } catch (error) {
     tokenCache.isLoading = false;
-
-    if (!config.itau.tempToken && !config.itau.clientSecret) {
-      tokenCache.accessToken = null;
-      tokenCache.expiresAt = null;
-    }
 
     var msg = error.response
       ? 'Erro ' + error.response.status + ': ' + JSON.stringify(error.response.data)
@@ -142,22 +119,11 @@ async function getToken() {
   }
 }
 
-/**
- * Invalida o cache do token
- */
 function invalidateToken() {
-  tokenCache = {
-    accessToken: null,
-    expiresAt: null,
-    isLoading: false,
-    source: null,
-  };
+  tokenCache = { accessToken: null, expiresAt: null, isLoading: false, source: null };
   logger.info('Cache de token invalidado');
 }
 
-/**
- * Retorna headers de autenticacao para chamadas a API
- */
 async function getAuthHeaders() {
   var token = await getToken();
   return {
@@ -167,10 +133,6 @@ async function getAuthHeaders() {
   };
 }
 
-/**
- * Retorna headers para endpoints que usam mTLS
- * (inclui client_id no header)
- */
 async function getMtlsHeaders() {
   var token = await getToken();
   return {
@@ -180,16 +142,10 @@ async function getMtlsHeaders() {
   };
 }
 
-/**
- * Verifica se o token esta configurado
- */
 function hasCredentials() {
   return !!(config.itau.tempToken || config.itau.clientId);
 }
 
-/**
- * Info sobre a fonte do token
- */
 function getTokenInfo() {
   return {
     hasTempToken: !!config.itau.tempToken,
@@ -202,11 +158,4 @@ function getTokenInfo() {
   };
 }
 
-module.exports = {
-  getToken,
-  invalidateToken,
-  getAuthHeaders,
-  getMtlsHeaders,
-  hasCredentials,
-  getTokenInfo,
-};
+module.exports = { getToken, invalidateToken, getAuthHeaders, getMtlsHeaders, hasCredentials, getTokenInfo };
