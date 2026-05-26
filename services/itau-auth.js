@@ -1,37 +1,45 @@
 // ============================================
-// SERVICO DE AUTENTICACAO ITAU (OAuth2) v5.6
+// SERVICO DE AUTENTICACAO ITAU (OAuth2) v5.7
 // ============================================
-// Token: Basic Auth SEM mTLS
-// API:   Bearer + mTLS (via itau-api.js)
+// Token OAuth2 COM mTLS (endpoint exige certificado)
 
 const axios = require('axios');
+const https = require('https');
 const config = require('../config');
 const logger = require('../utils/logger');
 
-let tokenCache = {
+var tokenCache = {
   accessToken: null,
   expiresAt: null,
   isLoading: false,
 };
 
+function createMtlsAgent() {
+  if (!config.mtls || !config.mtls.hasMtls) return undefined;
+  return new https.Agent({
+    cert: config.mtls.cert,
+    key: config.mtls.key,
+    rejectUnauthorized: false,
+  });
+}
+
 async function getToken() {
   var now = Date.now();
   if (tokenCache.accessToken && tokenCache.expiresAt && now < tokenCache.expiresAt - 30000) {
-    logger.debug('Token obtido do cache');
+    logger.debug('Token do cache');
     return tokenCache.accessToken;
   }
   if (tokenCache.isLoading) {
-    logger.debug('Aguardando token em andamento...');
-    await new Promise(function(resolve) { setTimeout(resolve, 500); });
+    await new Promise(function(r) { setTimeout(r, 500); });
     return getToken();
   }
   tokenCache.isLoading = true;
   try {
     var tokenUrl = config.itauTokenUrl;
-    logger.info('Solicitando token OAuth2 (' + config.ambiente + ')... URL: ' + tokenUrl);
+    logger.info('Solicitando token OAuth2 com mTLS... URL: ' + tokenUrl);
     var params = new URLSearchParams();
     params.append('grant_type', 'client_credentials');
-    var requestConfig = {
+    var reqConfig = {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       auth: {
         username: config.itau.clientId,
@@ -39,15 +47,21 @@ async function getToken() {
       },
       timeout: 30000,
     };
-    var response = await axios.post(tokenUrl, params, requestConfig);
-    var data = response.data;
-    if (!data.access_token) {
-      throw new Error('Token nao retornado pela API do Itau');
+    var agent = createMtlsAgent();
+    if (agent) {
+      reqConfig.httpsAgent = agent;
+      logger.info('mTLS ativo na chamada OAuth2');
+    } else {
+      logger.error('mTLS NAO disponivel para OAuth2!');
     }
+    var response = await axios.post(tokenUrl, params, reqConfig);
+    var data = response.data;
+    if (!data.access_token) throw new Error('Token nao retornado');
     tokenCache.accessToken = data.access_token;
     tokenCache.expiresAt = now + (data.expires_in * 1000);
     tokenCache.isLoading = false;
     logger.info('Token OAuth2 obtido com sucesso! Expira em ' + data.expires_in + 's');
+    logger.info('Scope do token: ' + (data.scope || 'nao informado'));
     return data.access_token;
   } catch (error) {
     tokenCache.isLoading = false;
@@ -63,7 +77,6 @@ async function getToken() {
 
 function invalidateToken() {
   tokenCache = { accessToken: null, expiresAt: null, isLoading: false };
-  logger.info('Cache de token invalidado');
 }
 
 async function getAuthHeaders() {
