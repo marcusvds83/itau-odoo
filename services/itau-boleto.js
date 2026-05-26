@@ -195,9 +195,7 @@ async function emitirBoleto(odooData) {
       var resp = resultado.data || resultado;
       resp._via = 'bolecode';
       return resp;
-    } catch (bolecodeError) {
-      logger.warn('BoleCode falhou: ' + bolecodeError.message + ' - tentando Cash Management');
-    }
+    } catch (bolecodeError) { throw bolecodeError; }
   }
 
   logger.info('Tentando emissao via Cash Management API...');
