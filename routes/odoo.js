@@ -10,7 +10,7 @@ const boletoService = require('../services/itau-boleto');
 const pixService = require('../services/itau-pix');
 const paymentService = require('../services/payment-method');
 const config = require('../config');
-const { getTokenInfo } = require('../services/itau-auth');
+const { getTokenStatus } = require('../services/itau-auth');
 
 router.use(authenticateOdoo);
 
@@ -139,7 +139,7 @@ router.post('/pagar', async function(req, res) {
 
 router.get('/status/credenciais', async function(req, res) {
   try {
-    var tokenInfo = getTokenInfo();
+    var tokenInfo = getTokenStatus();
     res.json({
       success: true,
       versao: config.versao,

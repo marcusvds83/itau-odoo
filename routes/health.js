@@ -31,8 +31,8 @@ router.get('/health', async function(req, res) {
     health.services.itau = 'mock';
   } else {
     try {
-      var { getToken } = require('../services/itau-auth');
-      await getToken();
+      const { getAccessToken } = require('../services/itau-auth');
+      await getAccessToken();
       health.services.itau = 'ok';
     } catch (e) {
       health.services.itau = 'error: ' + e.message;
