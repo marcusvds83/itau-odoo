@@ -26,11 +26,13 @@ const healthRoutes = require('./routes/health');
 const tokenRoutes = require('./routes/token');
 const boletoRoutes = require('./routes/boletos');
 const webhookRoutes = require('./routes/webhook');
+const apiRoutes = require('./routes/api');
 
 app.use('/health', healthRoutes);
 app.use('/token', tokenRoutes);
 app.use('/boletos', boletoRoutes);
 app.use('/webhook', webhookRoutes);
+app.use('/api', apiRoutes);
 
 app.get('/', (req, res) => {
   res.json({
