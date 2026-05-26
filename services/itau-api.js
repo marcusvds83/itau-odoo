@@ -36,7 +36,7 @@ async function callItau(method, path, data, params, retries) {
   var client = getItauClient();
   for (var attempt = 1; attempt <= retries; attempt++) {
     try {
-      var token = await getAccessToken();
+      var token = await getAccessToken("boletos_pix");
       var headers = { "Authorization": "Bearer " + token, "Content-Type": "application/json", "Accept": "application/json" };
       var requestConfig = { method: method, url: path, headers: headers, params: params, data: data };
       logger.info("Itau API " + method + " " + path + " (tentativa " + attempt + "/" + retries + ")");
@@ -108,7 +108,7 @@ async function callBolecode(method, path, data, params) {
     var status = error.response ? error.response.status : null;
     var errBody = error.response ? error.response.data : null;
     logger.error("BoleCode API ERRO " + status + ": " + JSON.stringify(errBody));
-    if (status === 401 || status === 403) { invalidateToken(); }
+    if (status === 401 || status === 403) { invalidateToken("boletos_pix"); }
     throw new Error("BoleCode " + status + ": " + JSON.stringify(errBody));
   }
 }

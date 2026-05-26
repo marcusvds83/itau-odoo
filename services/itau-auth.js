@@ -1,24 +1,16 @@
-async function getAuthHeaders() {
-  var token = await getAccessToken();
-  return {
-    "Authorization": "Bearer " + token,
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-  };
-}
-
 const axios = require("axios");
 const config = require("../config");
 const https = require("https");
 
-let tokenCache = { accessToken: null, expiresAt: 0 };
+let tokenCache = {};
 
-async function getAccessToken() {
+async function getAccessToken(scope) {
   var now = Date.now();
-  if (tokenCache.accessToken && now < tokenCache.expiresAt) {
-    return tokenCache.accessToken;
+  var cacheKey = scope || "default";
+  if (tokenCache[cacheKey] && tokenCache[cacheKey].accessToken && now < tokenCache[cacheKey].expiresAt) {
+    return tokenCache[cacheKey].accessToken;
   }
-  console.log("[ITAU-AUTH] Solicitando novo token OAuth2...");
+  console.log("[ITAU-AUTH] Solicitando novo token OAuth2 scope=" + (scope || "none"));
   console.log("[ITAU-AUTH] URL:", config.itauTokenUrl);
   var httpsAgent = config.mtls.hasMtls ? new https.Agent({
     cert: config.mtls.cert,
@@ -29,6 +21,7 @@ async function getAccessToken() {
     params.append("grant_type", "client_credentials");
     params.append("client_id", config.itau.clientId);
     params.append("client_secret", config.itau.clientSecret);
+    if (scope) { params.append("scope", scope); }
     var response = await axios.post(config.itauTokenUrl, params.toString(), {
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -40,29 +33,34 @@ async function getAccessToken() {
       timeout: 30000,
     });
     if (response.data && response.data.access_token) {
-      tokenCache.accessToken = response.data.access_token;
-      tokenCache.expiresAt = now + ((response.data.expires_in || 1800) * 1000) - 300000;
-      console.log("[ITAU-AUTH] Token obtido com sucesso!");
+      tokenCache[cacheKey] = {
+        accessToken: response.data.access_token,
+        expiresAt: now + ((response.data.expires_in || 1800) * 1000) - 300000,
+      };
+      console.log("[ITAU-AUTH] Token obtido com sucesso! scope=" + (scope || "none"));
       return response.data.access_token;
     } else {
-      throw new Error("Resposta sem access_token");
+      throw new Error("Resposta sem access_token: " + JSON.stringify(response.data));
     }
   } catch (error) {
     console.error("[ITAU-AUTH] ERRO:", error.response ? error.response.status : "", error.response ? JSON.stringify(error.response.data) : error.message);
-    tokenCache.accessToken = null;
-    tokenCache.expiresAt = 0;
-    throw new Error("Falha OAuth2: " + (error.response && error.response.data ? error.response.data.error_description || error.response.data.error : error.message));
+    tokenCache[cacheKey] = { accessToken: null, expiresAt: 0 };
+    throw new Error("Falha OAuth2: " + (error.response && error.response.data ? error.response.data.error_description || JSON.stringify(error.response.data) : error.message));
   }
 }
 
-function invalidateToken() {
-  tokenCache.accessToken = null;
-  tokenCache.expiresAt = 0;
+function invalidateToken(scope) {
+  var cacheKey = scope || "default";
+  tokenCache[cacheKey] = { accessToken: null, expiresAt: 0 };
 }
 
 function getTokenStatus() {
   var now = Date.now();
-  return { hasToken: !!tokenCache.accessToken, isValid: tokenCache.accessToken && now < tokenCache.expiresAt };
+  var result = {};
+  for (var key in tokenCache) {
+    result[key] = { hasToken: !!tokenCache[key].accessToken, isValid: tokenCache[key].accessToken && now < tokenCache[key].expiresAt };
+  }
+  return result;
 }
 
-module.exports = { getAccessToken, invalidateToken, getTokenStatus, getAuthHeaders };
+module.exports = { getAccessToken, invalidateToken, getTokenStatus };
