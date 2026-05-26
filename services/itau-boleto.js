@@ -58,6 +58,13 @@ function montaPayloadBolecode(odooData) {
       codigo_especie: fatura.codigo_especie || '01',
       especie_titulo: fatura.especie || 'DSI',
       aceite: fatura.aceite || 'N',
+      dados_individuais_boleto: [{
+        numero_nosso_numero: fatura.nosso_numero || '',
+        data_vencimento: fatura.data_vencimento || '',
+        valor_titulo: String(Math.round((fatura.valor_nominal || 0) * 100)).padStart(17, '0'),
+        texto_uso_beneficiario: '0',
+        texto_seu_numero: fatura.seu_numero || fatura.name || '',
+      }],
       data_emissao: fatura.data_emissao || new Date().toISOString().split('T')[0],
       data_limite_pagamento: fatura.data_limite_pagamento || null,
       juros_tipo: fatura.juros_tipo || 'ISENTO',

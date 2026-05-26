@@ -1,23 +1,11 @@
 const fs = require('fs');
 var old = fs.readFileSync('services/itau-boleto.js', 'utf8');
 
-// Add id_beneficiario to beneficiario in montaPayloadBolecode
+// Add dados_individuais_boleto array to dado_boleto in montaPayloadBolecode
 old = old.replace(
-  "beneficiario: {\n      cpf_cnpj:",
-  "beneficiario: {\n      id_beneficiario: '776400223389',\n      cpf_cnpj:"
-);
-
-// Add id_beneficiario to montaPayloadCashManagement too
-old = old.replace(
-  "beneficiario: {\n      agencia:",
-  "beneficiario: {\n      id_beneficiario: '776400223389',\n      agencia:"
-);
-
-// Add missing fields to dado_boleto in montaPayloadBolecode
-old = old.replace(
-  "especie_titulo: fatura.especie || 'DSI',",
-  "codigo_carteira: 109,\n      descricao_instrumento_cobranca: 'boleto_pix',\n      codigo_especie: fatura.codigo_especie || '01',\n      especie_titulo: fatura.especie || 'DSI',"
+  "aceite: fatura.aceite || 'N',",
+  "aceite: fatura.aceite || 'N',\n      dados_individuais_boleto: [{\n        numero_nosso_numero: fatura.nosso_numero || '',\n        data_vencimento: fatura.data_vencimento || '',\n        valor_titulo: String(Math.round((fatura.valor_nominal || 0) * 100)).padStart(17, '0'),\n        texto_uso_beneficiario: '0',\n        texto_seu_numero: fatura.seu_numero || fatura.name || '',\n      }],"
 );
 
 fs.writeFileSync('services/itau-boleto.js', old, 'utf8');
-console.log('OK - campos obrigatorios adicionados');
+console.log('OK - dados_individuais_boleto adicionado');
