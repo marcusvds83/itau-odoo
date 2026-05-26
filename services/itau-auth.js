@@ -78,7 +78,7 @@ function invalidateToken() {
 function getTokenStatus() {
   const now = Date.now();
   return {
-    hasToken: cd ~/itau-odootokenCache.accessToken,
+    hasToken: tokenCache.accessToken,
     isValid: tokenCache.accessToken && now < tokenCache.expiresAt,
     expiresAt: tokenCache.expiresAt > 0 ? new Date(tokenCache.expiresAt).toISOString() : null,
     expiresIn: tokenCache.expiresAt > now ? Math.round((tokenCache.expiresAt - now) / 1000) + 's' : 'expirado',

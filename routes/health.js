@@ -21,7 +21,7 @@ router.get('/diag', async (req, res) => {
     const mtls = config.createMtlsConfig();
     res.json({
       status: 'ok',
-      token: { temToken: cd ~/itau-odootoken, tamanho: token ? token.length : 0, prefixo: token ? token.substring(0, 20) + '...' : 'N/A' },
+      token: { temToken: token, tamanho: token ? token.length : 0, prefixo: token ? token.substring(0, 20) + '...' : 'N/A' },
       mtls: { configurado: mtls.hasMtls, certTamanho: config.mtls.cert.length },
       banco: { agencia: config.banco.agencia, conta: config.banco.conta, idBeneficiario: config.banco.idBeneficiario, codigoCarteira: config.banco.codigoCarteira },
     });
