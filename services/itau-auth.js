@@ -1,3 +1,12 @@
+async function getAuthHeaders() {
+  var token = await getAccessToken();
+  return {
+    "Authorization": "Bearer " + token,
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+  };
+}
+
 const axios = require("axios");
 const config = require("../config");
 const https = require("https");
@@ -56,4 +65,4 @@ function getTokenStatus() {
   return { hasToken: !!tokenCache.accessToken, isValid: tokenCache.accessToken && now < tokenCache.expiresAt };
 }
 
-module.exports = { getAccessToken, invalidateToken, getTokenStatus };
+module.exports = { getAccessToken, invalidateToken, getTokenStatus, getAuthHeaders };

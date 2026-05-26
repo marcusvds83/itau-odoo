@@ -5,7 +5,7 @@
 const axios = require('axios');
 const https = require('https');
 const config = require('../config');
-const { getAuthHeaders } = require('./itau-auth');
+const { getAccessToken } = require('./itau-auth');
 const logger = require('../utils/logger');
 
 function createItauClient() {
@@ -38,7 +38,7 @@ async function callItau(method, path, data, params, retries) {
   var client = getItauClient();
   for (var attempt = 1; attempt <= retries; attempt++) {
     try {
-      var headers = await getAuthHeaders();
+      var token = await getAccessToken(); var headers = { "Authorization": "Bearer " + token, "Content-Type": "application/json", "Accept": "application/json" };
       var requestConfig = { method: method, url: path, headers: headers, params: params, data: data };
       logger.info('Itau API ' + method + ' ' + path + ' (tentativa ' + attempt + '/' + retries + ')');
       var response = await client.request(requestConfig);
@@ -71,4 +71,27 @@ async function callItau(method, path, data, params, retries) {
   }
 }
 
-module.exports = { callItau: callItau, getItauClient: getItauClient };
+async function callBolecode(method, path, data, params) {
+  var token = await getAccessToken();
+  var clientConfig = {
+    baseURL: "https://secure.api.itau/pix_recebimentos_conciliacoes/v2",
+    timeout: 30000,
+    headers: {
+      "Authorization": "Bearer " + token,
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+    },
+  };
+  if (config.mtls && config.mtls.hasMtls) {
+    clientConfig.httpsAgent = new https.Agent({
+      cert: config.mtls.cert,
+      key: config.mtls.key,
+      rejectUnauthorized: false,
+    });
+  }
+  var client = axios.create(clientConfig);
+  var response = await client.request({ method: method, url: path, data: data, params: params });
+  return response.data;
+}
+
+module.exports = { callItau, callBolecode, getItauClient };
