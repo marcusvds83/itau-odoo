@@ -1,270 +1,137 @@
-// ============================================
-// SERVICO DE INTEGRACAO API BOLETOS ITAU v5.1
-// ============================================
-// Emissao e consulta de boletos via BoleCode API
-// v5.1: Usa callBolecode (mTLS + secure.api.itau)
-
-const { callBolecode, callItau } = require('./itau-api');
+/**
+ * services/itau-boleto.js - v6.1
+ * CORRECAO: numero_nosso_numero auto-gerado
+ */
+const { getAccessToken, invalidateToken } = require('./itau-auth');
+const { callBolecode } = require('./itau-api');
 const config = require('../config');
-const logger = require('../utils/logger');
 
-const BOLECODE_ENDPOINTS = {
-  emissao: 'boletos_pix',
-  consulta: 'boletos_pix',
-  pdf: function(id) { return 'boletos_pix/' + id + '/pdf'; },
-};
+let nossoNumeroSeq = 1;
 
-const BOLETO_ENDPOINTS = {
-  emissao: 'post/boletos',
-  consulta: 'boletos',
-  pdf: function(id) { return 'boletos/' + id + '/pdf'; },
-  baixa: function(id) { return 'boletos/' + id + '/baixa'; },
-  vencimento: function(id) { return 'boletos/' + id + '/data_vencimento'; },
-  juros: function(id) { return 'boletos/' + id + '/juros'; },
-  multa: function(id) { return 'boletos/' + id + '/multa'; },
-  valor_nominal: function(id) { return 'boletos/' + id + '/valor_nominal'; },
-  desconto: function(id) { return 'boletos/' + id + '/desconto'; },
-  pagador: function(id) { return 'boletos/' + id + '/pagador'; },
-};
+function gerarNossoNumero(numeroPedido) {
+  let base = '';
+  if (numeroPedido) {
+    base = String(numeroPedido).replace(/D/g, '');
+    base = base.substring(Math.max(0, base.length - 8));
+  }
+  if (base.length < 8) {
+    base = String(Date.now()).substring(base.length < 8 ? 4 : 2, 10 - (8 - base.length)) + base;
+    base = base.substring(0, 8);
+  }
+  const seq = String(nossoNumeroSeq++).padStart(4, '0');
+  const nossoNumero = base + seq;
+  console.log('[BOLETO] Nosso Numero gerado:', nossoNumero, '(pedido:', numeroPedido || 'N/A', ', seq:', seq + ')');
+  return nossoNumero;
+}
 
-function montaPayloadBolecode(odooData) {
-  var fatura = odooData.fatura || {};
-  var empresa = odooData.empresa || {};
-  var pagador = odooData.pagador || {};
+function calcularDataVencimento(dias) {
+  const data = new Date();
+  data.setDate(data.getDate() + dias);
+  const ano = data.getFullYear();
+  const mes = String(data.getMonth() + 1).padStart(2, '0');
+  const dia = String(data.getDate()).padStart(2, '0');
+  return ano + '-' + mes + '-' + dia;
+}
 
-  var agencia = empresa.agencia || '7764';
-  var conta = (empresa.conta || '223389').replace('-', '');
-  var contaSemDv = conta.slice(0, -1);
-  var dv = conta.slice(-1);
-  var idBeneficiario = agencia + '00' + contaSemDv + dv;
+function montaPayloadBolecode(dadosBoleto) {
+  const idBeneficiario = config.banco.idBeneficiario || '776400223389';
+  const codigoCarteira = config.banco.codigoCarteira || '109';
+  const cnpjEmpresa = config.empresa.cnpj || '22603750000190';
+  const nossoNumero = dadosBoleto.nossoNumero || gerarNossoNumero(dadosBoleto.numeroPedido);
+  const valorOriginal = typeof dadosBoleto.valor === 'string' ? dadosBoleto.valor.replace(',', '.') : String(dadosBoleto.valor);
+  const dataVencimento = dadosBoleto.dataVencimento || calcularDataVencimento(30);
+  const etapa = dadosBoleto.etapa || 'Simulacao';
+  const cpfCnpjPagador = dadosBoleto.cpfCnpjPagador || '';
 
-  var payload = {
-    etapa_processo_boleto: fatura.etapa || 'Simulacao',
+  const payload = {
+    etapa_processo_boleto: etapa,
     codigo_canal_operacao: 'API',
     indicador_continuade: 'N',
-    numero_contrato: idBeneficiario,
+    numero_contrato: dadosBoleto.numeroContrato || '00010012345',
     beneficiario: {
-      id_beneficiario: '776400223389',
-      cpf_cnpj: (empresa.cpf_cnpj || '22603750000190').replace(/\D/g, ''),
-      nome: empresa.nome || 'AJL FERRO E ACO',
+      id_beneficiario: idBeneficiario,
+      cpf_cnpj: cnpjEmpresa,
+      nome: dadosBoleto.nomeBeneficiario || config.empresa.nome || 'AJL FERRO E ACO LTDA',
     },
     dado_boleto: {
-      nosso_numero: fatura.nosso_numero || '',
-      seu_numero: fatura.seu_numero || fatura.name || '',
-      data_vencimento: fatura.data_vencimento,
-      valor_nominal: (fatura.valor_nominal || 0).toFixed(2),
-      codigo_carteira: 109,
-      descricao_instrumento_cobranca: 'boleto_pix',
-      codigo_especie: fatura.codigo_especie || '01',
-      especie_titulo: fatura.especie || 'DSI',
-      aceite: fatura.aceite || 'N',
-      dados_individuais_boleto: [{
-        numero_nosso_numero: fatura.nosso_numero || '',
-        data_vencimento: fatura.data_vencimento || '',
-        valor_titulo: String(Math.round((fatura.valor_nominal || 0) * 100)).padStart(17, '0'),
-        texto_uso_beneficiario: '0',
-        texto_seu_numero: fatura.seu_numero || fatura.name || '',
-      }],
-      data_emissao: fatura.data_emissao || new Date().toISOString().split('T')[0],
-      data_limite_pagamento: fatura.data_limite_pagamento || null,
-      juros_tipo: fatura.juros_tipo || 'ISENTO',
-      juros_valor: fatura.juros_valor || null,
-      multa_tipo: fatura.multa_tipo || 'ISENTO',
-      multa_valor: fatura.multa_valor || null,
-      multa_data: fatura.multa_data || null,
-      protesto_codigo: fatura.protesto_codigo || 'ISENTO',
-      protesto_prazo: fatura.protesto_prazo || null,
-      negativacao_codigo: fatura.negativizacao_codigo || 'ISENTO',
-      negativizacao_prazo: fatura.negativizacao_prazo || null,
-      instrucao_caixa1: fatura.instrucao1 || '',
-      instrucao_caixa2: fatura.instrucao2 || '',
+      codigo_carteira: dadosBoleto.codigoCarteira || codigoCarteira,
+      data_vencimento: dataVencimento,
+      valor_titulo: {
+        valor_original: valorOriginal,
+      },
+      dados_individuais_boleto: {
+        numero_nosso_numero: nossoNumero,
+        tipo_formulario: '3',
+        descricao_tipo_servico: dadosBoleto.descricao || 'Pagamento AJL Ferro e Aco',
+      },
     },
     pagador: {
-      cpf_cnpj: (pagador.cpf_cnpj || '').replace(/\D/g, ''),
-      nome: pagador.nome || pagador.name || '',
+      cpf_cnpj: cpfCnpjPagador,
+      nome: dadosBoleto.nomePagador || '',
     },
   };
-
-  if (pagador.nome || pagador.name) {
-    payload.pagador.endereco = {
-      logradouro: pagador.street || pagador.logradouro || '',
-      numero: pagador.street_number || pagador.numero || '',
-      complemento: pagador.street2 || pagador.complemento || '',
-      bairro: pagador.district || pagador.bairro || '',
-      cidade: pagador.city || pagador.cidade || '',
-      estado: pagador.state || pagador.estado || '',
-      cep: (pagador.zip || pagador.cep || '').replace(/\D/g, ''),
-    };
-  }
 
   return payload;
 }
 
-function montaPayloadCashManagement(odooData) {
-  var fatura = odooData.fatura || {};
-  var empresa = odooData.empresa || {};
-  var pagador = odooData.pagador || {};
+async function emitirBoleto(dadosBoleto) {
+  console.log('[BOLETO] Iniciando emissao de boleto...');
+  console.log('[BOLETO] Valor:', dadosBoleto.valor);
+  console.log('[BOLETO] CPF/CNPJ pagador:', dadosBoleto.cpfCnpjPagador);
+  console.log('[BOLETO] Pedido:', dadosBoleto.numeroPedido || 'N/A');
 
-  return {
-    etapa_processo_boleto: fatura.etapa || 'registro',
-    codigo_canal_operacao: 'API',
-    beneficiario: {
-      id_beneficiario: '776400223389',
-      agencia: empresa.agencia || '7764',
-      conta: empresa.conta || '223389',
-      conta_dv: empresa.conta_dv || '9',
-      cpf_cnpj: (empresa.cpf_cnpj || '22603750000190').replace(/\D/g, ''),
-      nome: empresa.nome || 'AJL Ferro e Aco',
-      endereco: {
-        logradouro: empresa.logradouro || empresa.street || '',
-        numero: empresa.numero || '',
-        complemento: empresa.complemento || '',
-        bairro: empresa.bairro || empresa.district || '',
-        cidade: empresa.cidade || empresa.city || 'Curitiba',
-        estado: empresa.estado || empresa.state || 'PR',
-        cep: empresa.cep || empresa.zip || '',
-      },
-    },
-    dado_boleto: {
-      nosso_numero: fatura.nosso_numero || '',
-      seu_numero: fatura.seu_numero || fatura.name || '',
-      data_vencimento: fatura.data_vencimento,
-      data_limite_pagamento: fatura.data_limite_pagamento || null,
-      valor_nominal: (fatura.valor_nominal || 0).toFixed(2),
-      especie_titulo: fatura.especie || 'DSI',
-      aceite: fatura.aceite || 'N',
-      juros_tipo: fatura.juros_tipo || 'isento',
-      juros_valor: fatura.juros_valor || null,
-      multa_tipo: fatura.multa_tipo || 'isento',
-      multa_valor: fatura.multa_valor || null,
-      multa_data: fatura.multa_data || null,
-      protesto_codigo: fatura.protesto_codigo || 'isento',
-      protesto_prazo: fatura.protesto_prazo || null,
-      negativizacao_codigo: fatura.negativizacao_codigo || 'isento',
-      negativizacao_prazo: fatura.negativizacao_prazo || null,
-      instrucao_caixa1: fatura.instrucao1 || '',
-      instrucao_caixa2: fatura.instrucao2 || '',
-      instrucao_caixa3: fatura.instrucao3 || '',
-      instrucao_caixa4: fatura.instrucao4 || '',
-    },
-    pagador: {
-      cpf_cnpj: (pagador.cpf_cnpj || '').replace(/\D/g, ''),
-      nome: pagador.nome || pagador.name || '',
-      endereco: {
-        logradouro: pagador.street || '',
-        numero: pagador.street_number || '',
-        complemento: pagador.street2 || '',
-        bairro: pagador.district || '',
-        cidade: pagador.city || '',
-        estado: pagador.state || '',
-        cep: pagador.zip || '',
-      },
-    },
-  };
-}
-
-function limparNull(obj) {
-  var cleaned = {};
-  for (var key in obj) {
-    if (obj[key] !== null && obj[key] !== undefined) {
-      if (typeof obj[key] === 'object' && !Array.isArray(obj[key])) {
-        cleaned[key] = limparNull(obj[key]);
-      } else {
-        cleaned[key] = obj[key];
-      }
-    }
-  }
-  return cleaned;
-}
-
-async function emitirBoleto(odooData) {
-  var fatura = odooData.fatura || {};
-  var etapa = fatura.etapa || 'Simulacao';
-
-  logger.info('Emitindo boleto no Itau... etapa: ' + etapa);
-
-  if (config.mtls.hasMtls) {
-    try {
-      logger.info('Tentando emissao via BoleCode API (mTLS)...');
-      var payloadBolecode = montaPayloadBolecode(odooData);
-      payloadBolecode.etapa_processo_boleto = etapa;
-      var cleanPayload = limparNull(payloadBolecode);
-
-      logger.info('Payload BoleCode', {
-        etapa: etapa,
-        contrato: payloadBolecode.numero_contrato,
-        valor: payloadBolecode.dado_boleto.valor_nominal,
-      });
-
-      var resultado = await callBolecode('POST', BOLECODE_ENDPOINTS.emissao, cleanPayload);
-
-      if (resultado.codigo_barras || resultado.data?.codigo_barras) {
-        logger.info('Boleto emitido com sucesso via BoleCode');
-      } else {
-        logger.warn('Boleto processado via BoleCode, sem retorno completo');
-      }
-
-      var resp = resultado.data || resultado;
-      resp._via = 'bolecode';
-      return resp;
-    } catch (bolecodeError) { throw bolecodeError; }
-  }
-
-  logger.info('Tentando emissao via Cash Management API...');
-  var payloadCash = montaPayloadCashManagement(odooData);
-  payloadCash.etapa_processo_boleto = etapa;
-  var cleanCash = limparNull(payloadCash);
-
-  var resultadoCash = await callItau('POST', BOLETO_ENDPOINTS.emissao, cleanCash);
-
-  if (resultadoCash.codigo_barras || resultadoCash.data?.codigo_barras) {
-    logger.info('Boleto emitido via Cash Management');
-  }
-
-  var respCash = resultadoCash.data || resultadoCash;
-  respCash._via = 'cash_management';
-  return respCash;
-}
-
-async function consultarBoletos(filtros) {
-  logger.info('Consultando boletos...', filtros);
-  if (config.mtls.hasMtls) {
-    try {
-      return await callBolecode('GET', BOLECODE_ENDPOINTS.consulta, null, filtros);
-    } catch (err) {
-      logger.warn('Consulta BoleCode falhou: ' + err.message);
-    }
-  }
-  return await callItau('GET', BOLETO_ENDPOINTS.consulta, null, filtros);
-}
-
-async function baixarBoleto(idBoleto) {
-  logger.info('Baixando boleto ' + idBoleto + '...');
-  return callItau('PATCH', BOLETO_ENDPOINTS.baixa(idBoleto));
-}
-
-async function alterarVencimento(idBoleto, novaDataVencimento) {
-  logger.info('Alterando vencimento boleto ' + idBoleto);
-  return callItau('PATCH', BOLETO_ENDPOINTS.vencimento(idBoleto), { data_vencimento: novaDataVencimento });
-}
-
-async function obterPdfBoleto(idBoleto) {
-  logger.info('Obtendo PDF boleto ' + idBoleto + '...');
+  let accessToken;
   try {
-    if (config.mtls.hasMtls) {
-      try {
-        var r = await callBolecode('GET', BOLECODE_ENDPOINTS.pdf(idBoleto));
-        var pdf = r.pdf || r.base64 || r.data?.pdf || r.data?.base64 || (typeof r === 'string' ? r : null);
-        if (pdf) return { pdf_base64: pdf, content_type: 'application/pdf', tamanho_kb: Math.round(pdf.length * 0.75 / 1024) };
-      } catch (err) { logger.warn('PDF BoleCode falhou: ' + err.message); }
-    }
-    var rc = await callItau('GET', BOLETO_ENDPOINTS.pdf(idBoleto));
-    var pdfc = rc.pdf || rc.base64 || rc.data?.pdf || rc.data?.base64 || (typeof rc === 'string' ? rc : null);
-    if (pdfc) return { pdf_base64: pdfc, content_type: 'application/pdf', tamanho_kb: Math.round(pdfc.length * 0.75 / 1024) };
-    return rc.data || rc;
+    accessToken = await getAccessToken();
+  } catch (err) {
+    console.error('[BOLETO] Falha ao obter token:', err.message);
+    throw new Error('Falha na autenticacao Itau: ' + err.message);
+  }
+
+  const payload = montaPayloadBolecode(dadosBoleto);
+  const etapa = payload.etapa_processo_boleto;
+  console.log('[BOLETO] Emitindo boleto no Itau... etapa:', etapa);
+  console.log('[BOLETO] Tentando emissao via BoleCode API (mTLS)...');
+  console.log('[BOLETO] Payload Boleto | {"etapa":"' + etapa + '","contrato":"' + payload.numero_contrato + '","valor":"' + payload.dado_boleto.valor_titulo.valor_original + '","nosso_numero":"' + payload.dado_boleto.dados_individuais_boleto.numero_nosso_numero + '"}');
+
+  try {
+    const response = await callBolecode(accessToken, '/boletos_pix', payload);
+    console.log('[BOLETO] Boleto emitido com sucesso!');
+    console.log('[BOLETO] Resposta:', JSON.stringify(response, null, 2));
+    return { sucesso: true, dados: response };
   } catch (error) {
-    throw { status: error.status || 500, message: 'Erro PDF: ' + error.message, detail: error.detail };
+    if (error.message && (error.message.includes('401') || error.message.includes('403'))) {
+      console.log('[BOLETO] Token pode ter expirado, invalidando cache e tentando novamente...');
+      invalidateToken();
+      try {
+        accessToken = await getAccessToken();
+        const response = await callBolecode(accessToken, '/boletos_pix', payload);
+        console.log('[BOLETO] Boleto emitido com sucesso na 2a tentativa!');
+        return { sucesso: true, dados: response };
+      } catch (retryError) {
+        console.error('[BOLETO] Falha na 2a tentativa:', retryError.message);
+        throw retryError;
+      }
+    }
+    console.error('[BOLETO] Erro ao processar pagamento:', error.message);
+    throw error;
   }
 }
 
-module.exports = { emitirBoleto, consultarBoletos, obterPdfBoleto, baixarBoleto, alterarVencimento, BOLETO_ENDPOINTS, BOLECODE_ENDPOINTS };
+async function consultarBoleto(txid) {
+  let accessToken;
+  try {
+    accessToken = await getAccessToken();
+  } catch (err) {
+    throw new Error('Falha na autenticacao Itau: ' + err.message);
+  }
+  try {
+    const { callBolecode } = require('./itau-api');
+    const response = await callBolecode(accessToken, '/boletos_pix/' + txid, {});
+    return { sucesso: true, dados: response };
+  } catch (error) {
+    throw error;
+  }
+}
+
+module.exports = { emitirBoleto, consultarBoleto, montaPayloadBolecode };

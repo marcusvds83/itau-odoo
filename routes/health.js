@@ -1,68 +1,33 @@
-// ============================================
-// ROTA DE SAUDE / STATUS v5.0
-// ============================================
-
+/**
+ * routes/health.js - v6.1
+ */
 const express = require('express');
 const router = express.Router();
+const { getAccessToken, getTokenStatus } = require('../services/itau-auth');
 const config = require('../config');
-const logger = require('../utils/logger');
 
-router.get('/health', async function(req, res) {
-  var health = {
-    status: 'ok',
-    versao: config.versao,
-    timestamp: new Date().toISOString(),
-    ambiente: config.ambiente,
-    uptime: process.uptime(),
-    mockMode: config.mockMode,
-    services: {
-      itau: 'unknown',
-    },
-    credenciais: {
-      clientId: config.itau.clientId ? 'configurado' : 'nao configurado',
-      tempToken: config.itau.tempToken ? 'configurado' : 'nao configurado',
-      clientSecret: config.itau.clientSecret ? 'configurado' : 'nao configurado',
-      mTLS: config.hasMtls ? 'configurado' : 'nao configurado',
-      pixChave: config.itau.pixChave ? 'configurado' : 'nao configurado',
-    },
-  };
-
-  if (config.mockMode) {
-    health.services.itau = 'mock';
-  } else {
-    try {
-      const { getAccessToken } = require('../services/itau-auth');
-      await getAccessToken();
-      health.services.itau = 'ok';
-    } catch (e) {
-      health.services.itau = 'error: ' + e.message;
-      health.status = 'degraded';
-    }
+router.get('/', async (req, res) => {
+  try {
+    const tokenStatus = getTokenStatus();
+    res.json({ status: 'ok', token: tokenStatus });
+  } catch (err) {
+    res.status(500).json({ status: 'erro', mensagem: err.message });
   }
-
-  var statusCode = health.status === 'ok' ? 200 : 503;
-  res.status(statusCode).json(health);
 });
 
-router.get('/', function(req, res) {
-  res.json({
-    name: 'Middleware Itau-Odoo',
-    version: config.versao,
-    ambiente: config.ambiente,
-    mockMode: config.mockMode,
-    endpoints: {
-      api: '/api/*',
-      webhook: '/webhook/*',
-      health: '/health',
-      pdf: '/boleto/:id/pdf',
-    },
-    credenciais_itau: {
-      clientId: config.itau.clientId ? '***' + config.itau.clientId.slice(-4) : 'NAO CONFIGURADO',
-      tempToken: config.itau.tempToken ? 'CONFIGURADO' : 'NAO CONFIGURADO',
-      clientSecret: config.itau.clientSecret ? 'CONFIGURADO' : 'NAO CONFIGURADO',
-      mTLS: config.hasMtls ? 'CONFIGURADO' : 'NAO CONFIGURADO',
-    },
-  });
+router.get('/diag', async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const mtls = config.createMtlsConfig();
+    res.json({
+      status: 'ok',
+      token: { temToken: cd ~/itau-odootoken, tamanho: token ? token.length : 0, prefixo: token ? token.substring(0, 20) + '...' : 'N/A' },
+      mtls: { configurado: mtls.hasMtls, certTamanho: config.mtls.cert.length },
+      banco: { agencia: config.banco.agencia, conta: config.banco.conta, idBeneficiario: config.banco.idBeneficiario, codigoCarteira: config.banco.codigoCarteira },
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'erro', mensagem: err.message });
+  }
 });
 
 module.exports = router;

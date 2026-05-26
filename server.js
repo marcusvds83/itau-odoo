@@ -1,58 +1,70 @@
+/**
+ * server.js - v6.1
+ * Middleware Integracao Itau BoleCode <-> Odoo SaaS
+ * v6.1 - Correcao numero_nosso_numero auto-gerado
+ */
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const config = require('./config');
-const logger = require('./utils/logger');
 
 const app = express();
+app.set('trust proxy', 1);
 
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors({
-  origin: function (origin, callback) { callback(null, true); },
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-itau-signature'],
-}));
+app.use(cors());
+app.use(morgan('combined'));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use(morgan('combined'));
 
-var limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 200,
-  message: { success: false, message: 'Muitas requisicoes.' },
-});
-app.use('/api/', limiter);
+const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false });
+app.use(limiter);
 
-// ROTAS
-app.use('/', require('./routes/health'));
-app.use('/api', require('./routes/odoo'));
-app.use('/webhook', require('./routes/webhook'));
+const healthRoutes = require('./routes/health');
+const tokenRoutes = require('./routes/token');
+const boletoRoutes = require('./routes/boletos');
+const webhookRoutes = require('./routes/webhook');
 
-// ERROR HANDLER
-app.use(function(err, req, res, next) {
-  logger.error('Erro nao tratado: ' + err.message, { stack: err.stack });
-  res.status(500).json({ success: false, message: 'Erro interno' });
-});
+app.use('/health', healthRoutes);
+app.use('/token', tokenRoutes);
+app.use('/boletos', boletoRoutes);
+app.use('/webhook', webhookRoutes);
 
-// STARTUP
-var PORT = config.port;
-app.listen(PORT, function() {
-  logger.info('='.repeat(60));
-  logger.info('  Middleware Itau-Odoo v5.6 [PRODUCAO]');
-  logger.info('  Ambiente: ' + config.ambiente);
-  logger.info('  Porta: ' + PORT);
-  logger.info('  mTLS: ' + (config.mtls && config.mtls.hasMtls ? 'SIM (' + (config.mtls.cert ? config.mtls.cert.length + ' chars)' : 'VAZIO') : 'NAO'));
-  logger.info('  Client ID: ' + (config.itau.clientId ? '***' + config.itau.clientId.slice(-4) : 'NAO'));
-  logger.info('  Client Secret: ' + (config.itau.clientSecret ? 'SIM' : 'NAO'));
-  logger.info('  Mock Mode: ' + config.mockMode);
-  logger.info('  URL Itau: ' + config.itauBaseUrl);
-  logger.info('  URL Token: ' + config.itauTokenUrl);
-  logger.info('='.repeat(60));
+app.get('/', (req, res) => {
+  res.json({
+    nome: 'Middleware Itau <-> Odoo',
+    versao: '6.1.0',
+    empresa: config.empresa.nome,
+    status: 'online',
+    rotas: { health: '/health', healthDiag: '/health/diag', tokenStatus: '/token/status', tokenGerar: 'POST /token/gerar', boletoEmitir: 'POST /boletos/emitir', boletoConsultar: 'GET /boletos/:txid', webhookPix: 'POST /webhook/pix-confirmacao' },
+  });
 });
 
-process.on('SIGTERM', function() { process.exit(0); });
-process.on('SIGINT', function() { process.exit(0); });
+app.use((req, res) => { res.status(404).json({ erro: 'Rota nao encontrada', path: req.path }); });
+app.use((err, req, res, next) => { console.error('[SERVER] Erro nao tratado:', err); res.status(500).json({ erro: 'Erro interno do servidor' }); });
+
+const PORT = config.port;
+app.listen(PORT, () => {
+  const mtls = config.createMtlsConfig();
+  console.log('');
+  console.log('===========================================================');
+  console.log('  Middleware Itau-Odoo v6.1 [PRODUCAO]');
+  console.log('  Ambiente:', config.nodeEnv);
+  console.log('  Porta:', PORT);
+  console.log('  mTLS:', mtls.hasMtls ? 'SIM (' + config.mtls.cert.length + ' chars)' : 'NAO');
+  console.log('  Client ID: ***' + config.itau.clientId.substring(config.itau.clientId.length - 4));
+  console.log('  Client Secret:', config.itau.clientSecret ? 'SIM' : 'NAO');
+  console.log('  Mock Mode:', process.env.MOCK_MODE === 'true' ? 'true' : 'false');
+  console.log('  URL Itau:', config.itau.bolecodeBaseUrl);
+  console.log('  URL Token:', config.itau.tokenUrl);
+  console.log('  Agencia:', config.banco.agencia);
+  console.log('  Conta:', config.banco.conta);
+  console.log('  ID Beneficiario:', config.banco.idBeneficiario);
+  console.log('  Carteira:', config.banco.codigoCarteira);
+  console.log('===========================================================');
+  console.log('');
+});
 
 module.exports = app;
