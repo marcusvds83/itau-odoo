@@ -37,7 +37,7 @@ async function callItau(method, path, data, params, retries) {
   for (var attempt = 1; attempt <= retries; attempt++) {
     try {
       var token = await getAccessToken("boleto pix");
-      var headers = { "Authorization": "Bearer " + token, "Content-Type": "application/json", "Accept": "application/json" };
+      var headers = { "Authorization": "Bearer " + token, "Content-Type": "application/json", "Accept": "application/json", "x-itau-apikey": config.itau.clientId };
       var requestConfig = { method: method, url: path, headers: headers, params: params, data: data };
       logger.info("Itau API " + method + " " + path + " (tentativa " + attempt + "/" + retries + ")");
       var response = await client.request(requestConfig);
