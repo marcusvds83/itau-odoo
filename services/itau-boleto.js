@@ -44,6 +44,7 @@ function montaPayloadBolecode(odooData) {
     indicador_continuade: 'N',
     numero_contrato: idBeneficiario,
     beneficiario: {
+      id_beneficiario: '776400223389',
       cpf_cnpj: (empresa.cpf_cnpj || '22603750000190').replace(/\D/g, ''),
       nome: empresa.nome || 'AJL FERRO E ACO',
     },
@@ -52,6 +53,9 @@ function montaPayloadBolecode(odooData) {
       seu_numero: fatura.seu_numero || fatura.name || '',
       data_vencimento: fatura.data_vencimento,
       valor_nominal: (fatura.valor_nominal || 0).toFixed(2),
+      codigo_carteira: 109,
+      descricao_instrumento_cobranca: 'boleto_pix',
+      codigo_especie: fatura.codigo_especie || '01',
       especie_titulo: fatura.especie || 'DSI',
       aceite: fatura.aceite || 'N',
       data_emissao: fatura.data_emissao || new Date().toISOString().split('T')[0],
@@ -98,6 +102,7 @@ function montaPayloadCashManagement(odooData) {
     etapa_processo_boleto: fatura.etapa || 'registro',
     codigo_canal_operacao: 'API',
     beneficiario: {
+      id_beneficiario: '776400223389',
       agencia: empresa.agencia || '7764',
       conta: empresa.conta || '223389',
       conta_dv: empresa.conta_dv || '9',
