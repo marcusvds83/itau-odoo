@@ -1,4 +1,5 @@
-const axios = require('axios');
+const fs = require('fs');
+const c = `const axios = require('axios');
 const https = require('https');
 const crypto = require('crypto');
 const config = require('../config');
@@ -87,7 +88,7 @@ async function callBolecode(method, path, data, params) {
       chave: config.itau.pixChave || '',
       solicitacaoPagador: 'Pagamento - ' + (fatura.seu_numero || fatura.name || 'Boleto'),
     };
-    var cpfCnpj = (pagador.cpf_cnpj || '').replace(/\D/g, '');
+    var cpfCnpj = (pagador.cpf_cnpj || '').replace(/\\D/g, '');
     if (cpfCnpj && (pagador.nome || pagador.name)) {
       bolecodePayload.devedor = {};
       if (cpfCnpj.length <= 11) { bolecodePayload.devedor.cpf = cpfCnpj; }
@@ -129,3 +130,6 @@ async function callBolecode(method, path, data, params) {
 }
 
 module.exports = { callItau, callBolecode, getItauClient };
+`;
+fs.writeFileSync('services/itau-api.js', c, 'utf8');
+console.log('OK');
