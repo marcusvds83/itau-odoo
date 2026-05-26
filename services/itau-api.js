@@ -4,8 +4,9 @@
 
 const axios = require("axios");
 const https = require("https");
+const crypto = require("crypto");
 const config = require("../config");
-const { getAccessToken } = require("./itau-auth");
+const { getAccessToken, invalidateToken } = require("./itau-auth");
 const logger = require("../utils/logger");
 
 function createItauClient() {
@@ -20,7 +21,6 @@ function createItauClient() {
       key: config.mtls.key,
       rejectUnauthorized: false,
     });
-    logger.info("mTLS configurado via env vars");
   }
   return axios.create(clientConfig);
 }
@@ -41,7 +41,6 @@ async function callItau(method, path, data, params, retries) {
       var requestConfig = { method: method, url: path, headers: headers, params: params, data: data };
       logger.info("Itau API " + method + " " + path + " (tentativa " + attempt + "/" + retries + ")");
       var response = await client.request(requestConfig);
-      logger.info("Itau API " + method + " " + path + " -> " + response.status);
       return response.data;
     } catch (error) {
       var status = error.response ? error.response.status : null;
@@ -64,14 +63,16 @@ async function callItau(method, path, data, params, retries) {
 async function callBolecode(method, path, data, params) {
   var token = await getAccessToken();
   var bolecodePayload = data;
-  if (data && method === "POST" && path === "boletos_pix") {
+  if (data && (method === "POST" || method === "PUT") && path === "boletos_pix") {
     var fatura = data.dado_boleto || {};
     var pagador = data.pagador || {};
+    var txid = "" + Date.now() + crypto.randomBytes(4).toString("hex");
+    txid = txid.substring(0, 35);
     bolecodePayload = {
       calendario: { expiracao: 86400 },
-      valor: { original: fatura.valor_nominal || "0.00", modalidadeAlteracao: 0 },
+      valor: { original: String(fatura.valor_nominal || "0.00").replace(",","."), modalidadeAlteracao: 0 },
       chave: config.itau.pixChave || "",
-      solicitacaoPagador: "Pagamento - " + (fatura.seu_numero || "Boleto"),
+      solicitacaoPagador: "Pagamento - " + (fatura.seu_numero || fatura.name || "Boleto"),
     };
     var cpfCnpj = (pagador.cpf_cnpj || "").replace(/D/g, "");
     if (cpfCnpj && (pagador.nome || pagador.name)) {
@@ -84,7 +85,11 @@ async function callBolecode(method, path, data, params) {
     if (fatura.seu_numero || fatura.name) {
       bolecodePayload.infoAdicionais.push({ nome: "Pedido", valor: String(fatura.seu_numero || fatura.name).substring(0, 25) });
     }
-    logger.info("Payload BoleCode v2: " + JSON.stringify(bolecodePayload));
+    logger.info("BoleCode v2 PUT /boletos_pix/" + txid);
+    logger.info("Payload BoleCode v2: " + JSON.stringify(bolecodePayload, null, 2));
+    // PUT com TXID na URL
+    path = "boletos_pix/" + txid;
+    method = "PUT";
   }
   var clientConfig = {
     baseURL: "https://secure.api.itau/pix_recebimentos_conciliacoes/v2",
@@ -95,9 +100,17 @@ async function callBolecode(method, path, data, params) {
     clientConfig.httpsAgent = new https.Agent({ cert: config.mtls.cert, key: config.mtls.key, rejectUnauthorized: false });
   }
   var client = axios.create(clientConfig);
-  logger.info("BoleCode API " + method + " " + path);
-  var response = await client.request({ method: method, url: path, data: bolecodePayload, params: params });
-  return response.data;
+  try {
+    logger.info("BoleCode API " + method + " /" + path);
+    var response = await client.request({ method: method, url: path, data: bolecodePayload, params: params });
+    return response.data;
+  } catch (error) {
+    var status = error.response ? error.response.status : null;
+    var errBody = error.response ? error.response.data : null;
+    logger.error("BoleCode API ERRO " + status + ": " + JSON.stringify(errBody));
+    if (status === 401 || status === 403) { invalidateToken(); }
+    throw new Error("BoleCode " + status + ": " + JSON.stringify(errBody));
+  }
 }
 
 module.exports = { callItau, callBolecode, getItauClient };
