@@ -38,8 +38,9 @@ function montaPayloadBolecode(dadosBoleto) {
   const codigoCarteira = config.banco.codigoCarteira || '109';
   const cnpjEmpresa = config.empresa.cnpj || '22603750000190';
   const nossoNumero = dadosBoleto.nossoNumero || gerarNossoNumero(dadosBoleto.numeroPedido);
-  const valorOriginal = typeof dadosBoleto.valor === 'string' ? dadosBoleto.valor.replace(',', '.') : String(dadosBoleto.valor);
+  const valorOriginal = typeof dadosBoleto.valor === 'string' ? dadosBoleto.valor.replace(',', '.') : String(parseFloat(dadosBoleto.valor).toFixed(2));
   const dataVencimento = dadosBoleto.dataVencimento || calcularDataVencimento(30);
+  if(dadosBoleto.dataVencimento){const v=new Date(dadosBoleto.dataVencimento+'T12:00:00');const hj=new Date();hj.setHours(0,0,0,0);if(v<=hj){console.log('[BOLETO] Data vencimento no passado, ajustando +30 dias');dadosBoleto.dataVencimento=calcularDataVencimento(30);}}
   const etapa = dadosBoleto.etapa || 'Simulacao';
   const cpfCnpjPagador = dadosBoleto.cpfCnpjPagador || '';
 
