@@ -36,7 +36,20 @@ async function callItau(method, path, data, params, retries) {
   var client = getItauClient();
   for (var attempt = 1; attempt <= retries; attempt++) {
     try {
-      var token = await getAccessToken("boleto pix");
+      var scopesToTry = ["boleto pix", "boleto_pix", "boletos_pix", null];
+  var token = null;
+  var usedScope = null;
+  for (var si = 0; si < scopesToTry.length; si++) {
+    try {
+      usedScope = scopesToTry[si];
+      token = await getAccessToken(usedScope);
+      break;
+    } catch (scopeErr) {
+      logger.warn("Scope " + (usedScope || "none") + " falhou: " + scopeErr.message);
+      if (si < scopesToTry.length - 1) continue;
+      throw scopeErr;
+    }
+  }
       var headers = { "Authorization": "Bearer " + token, "Content-Type": "application/json", "Accept": "application/json", "x-itau-apikey": config.itau.clientId };
       var requestConfig = { method: method, url: path, headers: headers, params: params, data: data };
       logger.info("Itau API " + method + " " + path + " (tentativa " + attempt + "/" + retries + ")");
@@ -66,6 +79,7 @@ async function callBolecode(method, path, data, params) {
   if (data && (method === "POST" || method === "PUT") && path === "boletos_pix") {
     var fatura = data.dado_boleto || {};
     var pagador = data.pagador || {};
+    logger.info("BoleCode usando scope: " + (usedScope || "none"));
     var txid = "" + Date.now() + crypto.randomBytes(4).toString("hex");
     txid = txid.substring(0, 35);
     bolecodePayload = {
