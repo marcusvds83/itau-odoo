@@ -47,8 +47,8 @@ function montaPayloadBolecode(dadosBoleto) {
   const payload = {
     etapa_processo_boleto: etapa,
     codigo_canal_operacao: 'API',
-    indicador_continuade: 'N',
-    numero_contrato: dadosBoleto.numeroContrato || '00010012345',
+    indicador_continuidade: 'N',
+    numero_contrato: dadosBoleto.numeroContrato || '',
     beneficiario: {
       id_beneficiario: idBeneficiario,
       cpf_cnpj: cnpjEmpresa,
