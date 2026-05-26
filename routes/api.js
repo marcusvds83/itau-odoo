@@ -7,14 +7,20 @@ router.post('/pagar', authenticateApiKey, async (req, res) => {
   try {
     const d = req.body;
     console.log('[API] Body recebido:', JSON.stringify(d));
-    console.log('[API] Processando boleto...');
+
+    const fat = d.fatura || {};
+    const pag = d.pagador || {};
+    const emp = d.empresa || {};
+
     const payload = {
-      valor: d.valor || d.amount || d.amount_total || d.total || d.valor_total,
-      cpfCnpjPagador: d.cpf_cnpj_pagador || d.cpfCnpj || d.cpf_cnpj_pagador_pag || '',
-      nomePagador: d.nome_pagador || d.nome || d.partner_name || '',
-      numeroPedido: d.numero_pedido || d.invoice_id || d.name || '',
-      descricao: d.descricao || 'Pagamento AJL Ferro e Aco'
+      valor: fat.valor_nominal || d.valor || d.amount,
+      cpfCnpjPagador: pag.cpf_cnpj || d.cpfCnpj || '',
+      nomePagador: pag.nome || d.nome || '',
+      numeroPedido: fat.seu_numero || fat.name || d.numero_pedido || '',
+      dataVencimento: fat.data_vencimento || '',
+      descricao: fat.name || fat.seu_numero || 'Pagamento AJL Ferro e Aco'
     };
+
     console.log('[API] Payload mapeado:', JSON.stringify(payload));
     const resultado = await emitirBoleto(payload);
     res.json({ sucesso: true, mensagem: 'Boleto emitido', dados: resultado.dados });
