@@ -93,6 +93,7 @@ async function emitirBoleto(dadosBoleto) {
   const etapa = payload.etapa_processo_boleto;
   console.log('[BOLETO] Emitindo boleto no Itau... etapa:', etapa);
   console.log('[BOLETO] Tentando emissao via BoleCode API (mTLS)...');
+  console.log('[BOLETO] Payload completo:', JSON.stringify(payload, null, 2));
   console.log('[BOLETO] Payload Boleto | {"etapa":"' + etapa + '","contrato":"' + payload.numero_contrato + '","valor":"' + payload.dado_boleto.valor_titulo.valor_original + '","nosso_numero":"' + payload.dado_boleto.dados_individuais_boleto.numero_nosso_numero + '"}');
 
   try {

@@ -18,6 +18,8 @@ async function callBolecode(accessToken, endpoint, payload) {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
     'x-itau-apikey': config.itau.clientId,
+    'x-itau-flowID': '1',
+    'x-itau-correlationID': String(Date.now()),
   };
 
   try {
