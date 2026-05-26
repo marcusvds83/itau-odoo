@@ -171,7 +171,7 @@ async function emitirBoleto(odooData) {
 
   logger.info('Emitindo boleto no Itau... etapa: ' + etapa);
 
-  if (config.hasMtls) {
+  if (config.mtls.hasMtls) {
     try {
       logger.info('Tentando emissao via BoleCode API (mTLS)...');
       var payloadBolecode = montaPayloadBolecode(odooData);
@@ -218,7 +218,7 @@ async function emitirBoleto(odooData) {
 
 async function consultarBoletos(filtros) {
   logger.info('Consultando boletos...', filtros);
-  if (config.hasMtls) {
+  if (config.mtls.hasMtls) {
     try {
       return await callBolecode('GET', BOLECODE_ENDPOINTS.consulta, null, filtros);
     } catch (err) {
@@ -241,7 +241,7 @@ async function alterarVencimento(idBoleto, novaDataVencimento) {
 async function obterPdfBoleto(idBoleto) {
   logger.info('Obtendo PDF boleto ' + idBoleto + '...');
   try {
-    if (config.hasMtls) {
+    if (config.mtls.hasMtls) {
       try {
         var r = await callBolecode('GET', BOLECODE_ENDPOINTS.pdf(idBoleto));
         var pdf = r.pdf || r.base64 || r.data?.pdf || r.data?.base64 || (typeof r === 'string' ? r : null);
