@@ -30,7 +30,7 @@ const config = {
     key: process.env.ITAU_CERT_KEY || '',
   },
   createMtlsConfig() {
-    const hasCert = cd ~/itau-odoo(this.mtls.cert && this.mtls.key);
+    const hasCert = !!(this.mtls.cert && this.mtls.key);
     return { cert: this.mtls.cert, key: this.mtls.key, hasMtls: true };
   },
 };
