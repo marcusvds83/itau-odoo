@@ -1,7 +1,7 @@
 {
   "name": "middleware-itau-odoo",
-  "version": "6.4.0",
-  "description": "Middleware Itau-Odoo - AJL Ferro e Aco",
+  "version": "6.5.0",
+  "description": "Middleware Itau-Odoo - AJL Ferro e Aco - v6.5 FEBRABAN",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

@@ -1,7 +1,9 @@
 /**
- * server.js - v6.1
+ * server.js - v6.5
  * Middleware Integracao Itau BoleCode <-> Odoo SaaS
- * v6.1 - Correcao numero_nosso_numero auto-gerado
+ * v6.5 - PDF FEBRABAN padrao Itau com QR Code PIX
+ * - bwip-js callback-based (sem toBufferSync)
+ * - POST /boletos/pdf para geracao sob demanda
  */
 const express = require('express');
 const cors = require('cors');
@@ -37,7 +39,7 @@ app.use('/api', apiRoutes);
 app.get('/', (req, res) => {
   res.json({
     nome: 'Middleware Itau <-> Odoo',
-    versao: '6.1.0',
+    versao: '6.5.0',
     empresa: config.empresa.nome,
     status: 'online',
     rotas: { health: '/health', healthDiag: '/health/diag', tokenStatus: '/token/status', tokenGerar: 'POST /token/gerar', boletoEmitir: 'POST /boletos/emitir', boletoConsultar: 'GET /boletos/:txid', webhookPix: 'POST /webhook/pix-confirmacao' },
@@ -52,7 +54,7 @@ app.listen(PORT, () => {
   const mtls = config.createMtlsConfig();
   console.log('');
   console.log('===========================================================');
-  console.log('  Middleware Itau-Odoo v6.1 [PRODUCAO]');
+  console.log('  Middleware Itau-Odoo v6.5 [PRODUCAO]');
   console.log('  Ambiente:', config.nodeEnv);
   console.log('  Porta:', PORT);
   console.log('  mTLS:', mtls.hasMtls ? 'SIM (' + config.mtls.cert.length + ' chars)' : 'NAO');
