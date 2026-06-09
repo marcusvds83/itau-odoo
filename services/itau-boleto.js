@@ -1,139 +1,107 @@
-/**
- * services/itau-boleto.js - v6.1
- * CORRECAO: numero_nosso_numero auto-gerado
- */
 const { getAccessToken, invalidateToken } = require('./itau-auth');
 const { callBolecode } = require('./itau-api');
 const config = require('../config');
 
 let nossoNumeroSeq = 1;
 
-function gerarNossoNumero(numeroPedido) {
-  let base = '';
-  if (numeroPedido) {
-    base = String(numeroPedido).replace(/D/g, '');
-    base = base.substring(Math.max(0, base.length - 8));
-  }
-  if (base.length < 8) {
-    base = String(Date.now()).substring(base.length < 8 ? 4 : 2, 10 - (8 - base.length)) + base;
-    base = base.substring(0, 8);
-  }
-  const seq = String(nossoNumeroSeq++).padStart(4, '0');
-  const nossoNumero = base + seq;
-  console.log('[BOLETO] Nosso Numero gerado:', nossoNumero, '(pedido:', numeroPedido || 'N/A', ', seq:', seq + ')');
-  return nossoNumero;
+function gerarNossoNumero() {
+  const seq = String(nossoNumeroSeq++).padStart(8, '0');
+  console.log('[BOLETO] Nosso Numero:', seq);
+  return seq;
+}
+
+function formatarValorItau(valor) {
+  const num = Math.round(parseFloat(valor) * 100);
+  return String(num).padStart(15, '0');
+}
+
+function getDataHoje() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
 
 function calcularDataVencimento(dias) {
-  const data = new Date();
-  data.setDate(data.getDate() + dias);
-  const ano = data.getFullYear();
-  const mes = String(data.getMonth() + 1).padStart(2, '0');
-  const dia = String(data.getDate()).padStart(2, '0');
-  return ano + '-' + mes + '-' + dia;
+  const d = new Date();
+  d.setDate(d.getDate() + dias);
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
 
-function montaPayloadBolecode(dadosBoleto) {
+function montaPayloadBolecode(dados) {
   const idBeneficiario = config.banco.idBeneficiario || '776400223389';
   const codigoCarteira = config.banco.codigoCarteira || '109';
-  const cnpjEmpresa = config.empresa.cnpj || '22603750000190';
-  const nossoNumero = dadosBoleto.nossoNumero || gerarNossoNumero(dadosBoleto.numeroPedido);
-  const valorOriginal = typeof dadosBoleto.valor === 'string' ? dadosBoleto.valor.replace(',', '.') : String(parseFloat(dadosBoleto.valor).toFixed(2));
-  const dataVencimento = dadosBoleto.dataVencimento || calcularDataVencimento(30);
-  if(dadosBoleto.dataVencimento){const v=new Date(dadosBoleto.dataVencimento+'T12:00:00');const hj=new Date();hj.setHours(0,0,0,0);if(v<=hj){console.log('[BOLETO] Data vencimento no passado, ajustando +30 dias');dadosBoleto.dataVencimento=calcularDataVencimento(30);}}
-  const etapa = dadosBoleto.etapa || 'Simulacao';
-  const cpfCnpjPagador = dadosBoleto.cpfCnpjPagador || '';
-
-  const payload = {
+  const nossoNumero = dados.nossoNumero || gerarNossoNumero();
+  let dataVencimento = dados.dataVencimento || calcularDataVencimento(30);
+  if (dados.dataVencimento) {
+    const v = new Date(dados.dataVencimento + 'T12:00:00');
+    const hj = new Date(); hj.setHours(0,0,0,0);
+    if (v <= hj) { console.log('[BOLETO] Vencimento no passado, +30 dias'); dataVencimento = calcularDataVencimento(30); }
+  }
+  const etapa = dados.etapa || 'Simulacao';
+  const cpfCnpj = dados.cpfCnpjPagador || '';
+  const tipoPessoa = cpfCnpj.length <= 11 ? 'F' : 'J';
+  const campoPessoa = tipoPessoa === 'F' ? 'numero_cadastro_pessoa_fisica' : 'numero_cadastro_nacional_pessoa_juridica';
+  return {
     etapa_processo_boleto: etapa,
-    codigo_canal_operacao: 'API',
-    indicador_continuidade: 'N',
-    numero_contrato: dadosBoleto.numeroContrato || '',
-    beneficiario: {
-      id_beneficiario: idBeneficiario,
-      cpf_cnpj: cnpjEmpresa,
-      nome: dadosBoleto.nomeBeneficiario || config.empresa.nome || 'AJL FERRO E ACO LTDA',
-    },
+    beneficiario: { id_beneficiario: idBeneficiario },
     dado_boleto: {
-      codigo_carteira: dadosBoleto.codigoCarteira || codigoCarteira,
-      data_vencimento: dataVencimento,
-      valor_titulo: {
-        valor_original: valorOriginal,
+      descricao_instrumento_cobranca: 'boleto_pix',
+      tipo_boleto: 'a vista',
+      texto_seu_numero: String(dados.numeroPedido || '000001').substring(0, 10),
+      codigo_carteira: dados.codigoCarteira || codigoCarteira,
+      codigo_especie: '01',
+      data_emissao: getDataHoje(),
+      valor_abatimento: '00000000000000000',
+      pagador: {
+        pessoa: {
+          nome_pessoa: dados.nomePagador || '',
+          tipo_pessoa: { codigo_tipo_pessoa: tipoPessoa }
+        },
+        endereco: {
+          nome_logradouro: dados.logradouro || 'Rua Nao Informada',
+          nome_bairro: dados.bairro || 'Nao Informado',
+          nome_cidade: dados.cidade || 'Nao Informado',
+          sigla_UF: dados.estado || 'SP',
+          numero_CEP: String(dados.cep || '00000000').replace(/[^0-9]/g, '')
+        }
       },
-      dados_individuais_boleto: {
+      dados_individuais_boleto: [{
         numero_nosso_numero: nossoNumero,
-        tipo_formulario: '3',
-        descricao_tipo_servico: dadosBoleto.descricao || 'Pagamento AJL Ferro e Aco',
-      },
+        data_vencimento: dataVencimento,
+        texto_uso_beneficiario: String(dados.numeroPedido || '000001').substring(0, 25),
+        valor_titulo: formatarValorItau(dados.valor),
+        texto_seu_numero: String(dados.numeroPedido || '000001').substring(0, 10),
+        data_limite_pagamento: dataVencimento
+      }]
     },
-    pagador: {
-      cpf_cnpj: cpfCnpjPagador,
-      nome: dadosBoleto.nomePagador || '',
-    },
+    dados_qrcode: { chave: config.itau.pixChave || dados.chavePix || '' }
   };
-
-  return payload;
 }
 
-async function emitirBoleto(dadosBoleto) {
-  console.log('[BOLETO] Iniciando emissao de boleto...');
-  console.log('[BOLETO] Valor:', dadosBoleto.valor);
-  console.log('[BOLETO] CPF/CNPJ pagador:', dadosBoleto.cpfCnpjPagador);
-  console.log('[BOLETO] Pedido:', dadosBoleto.numeroPedido || 'N/A');
-
+async function emitirBoleto(dados) {
+  console.log('[BOLETO] Iniciando emissao... Valor:', dados.valor, 'CPF:', dados.cpfCnpjPagador);
   let accessToken;
-  try {
-    accessToken = await getAccessToken();
-  } catch (err) {
-    console.error('[BOLETO] Falha ao obter token:', err.message);
-    throw new Error('Falha na autenticacao Itau: ' + err.message);
-  }
-
-  const payload = montaPayloadBolecode(dadosBoleto);
-  const etapa = payload.etapa_processo_boleto;
-  console.log('[BOLETO] Emitindo boleto no Itau... etapa:', etapa);
-  console.log('[BOLETO] Tentando emissao via BoleCode API (mTLS)...');
-  console.log('[BOLETO] Payload completo:', JSON.stringify(payload, null, 2));
-  console.log('[BOLETO] Payload Boleto | {"etapa":"' + etapa + '","contrato":"' + payload.numero_contrato + '","valor":"' + payload.dado_boleto.valor_titulo.valor_original + '","nosso_numero":"' + payload.dado_boleto.dados_individuais_boleto.numero_nosso_numero + '"}');
-
+  try { accessToken = await getAccessToken(); }
+  catch (err) { throw new Error('Falha autenticacao: ' + err.message); }
+  const payload = montaPayloadBolecode(dados);
+  console.log('[BOLETO] Etapa:', payload.etapa_processo_boleto);
+  console.log('[BOLETO] Payload:', JSON.stringify(payload, null, 2));
   try {
     const response = await callBolecode(accessToken, '/boletos_pix', payload);
-    console.log('[BOLETO] Boleto emitido com sucesso!');
-    console.log('[BOLETO] Resposta:', JSON.stringify(response, null, 2));
+    console.log('[BOLETO] SUCESSO! Resposta:', JSON.stringify(response, null, 2));
     return { sucesso: true, dados: response };
   } catch (error) {
     if (error.message && (error.message.includes('401') || error.message.includes('403'))) {
-      console.log('[BOLETO] Token pode ter expirado, invalidando cache e tentando novamente...');
+      console.log('[BOLETO] Token expirado, tentando novamente...');
       invalidateToken();
       try {
         accessToken = await getAccessToken();
-        const response = await callBolecode(accessToken, '/boletos_pix', payload);
-        console.log('[BOLETO] Boleto emitido com sucesso na 2a tentativa!');
-        return { sucesso: true, dados: response };
-      } catch (retryError) {
-        console.error('[BOLETO] Falha na 2a tentativa:', retryError.message);
-        throw retryError;
-      }
+        const r = await callBolecode(accessToken, '/boletos_pix', payload);
+        console.log('[BOLETO] SUCESSO na 2a tentativa!');
+        return { sucesso: true, dados: r };
+      } catch (e) { throw e; }
     }
-    console.error('[BOLETO] Erro ao processar pagamento:', error.message);
     throw error;
   }
 }
 
-async function consultarBoleto(txid) {
-  let accessToken;
-  try {
-    accessToken = await getAccessToken();
-  } catch (err) {
-    throw new Error('Falha na autenticacao Itau: ' + err.message);
-  }
-  try {
-    const { callBolecode } = require('./itau-api');
-    const response = await callBolecode(accessToken, '/boletos_pix/' + txid, {});
-    return { sucesso: true, dados: response };
-  } catch (error) {
-    throw error;
-  }
-}
-
-module.exports = { emitirBoleto, consultarBoleto, montaPayloadBolecode };
+module.exports = { emitirBoleto, montaPayloadBolecode };

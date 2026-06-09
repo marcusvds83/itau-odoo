@@ -1,8 +1,4 @@
-/**
- * config/index.js - v6.1
- */
 require('dotenv').config();
-
 const config = {
   port: process.env.PORT || 3000,
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -12,8 +8,8 @@ const config = {
     clientId: process.env.ITAU_CLIENT_ID || '',
     clientSecret: process.env.ITAU_CLIENT_SECRET || '',
     tokenUrl: process.env.ITAU_TOKEN_URL || 'https://sts.itau.com.br/api/oauth/token',
-    boletoUrl: process.env.ITAU_BOLETO_URL || 'https://secure.api.itau/pix_recebimentos_conciliacoes/v2/boletos_pix',
     bolecodeBaseUrl: process.env.ITAU_BOLECODE_URL || 'https://secure.api.itau/pix_recebimentos_conciliacoes/v2',
+    pixChave: process.env.ITAU_PIX_CHAVE || '',
   },
   banco: {
     agencia: process.env.ITAU_AGENCIA || '7764',
@@ -31,9 +27,9 @@ const config = {
   },
   createMtlsConfig() {
     const hasCert = !!(this.mtls.cert && this.mtls.key);
+    if (!hasCert) return { cert: null, key: null, hasMtls: false };
     return { cert: this.mtls.cert, key: this.mtls.key, hasMtls: true };
   },
 };
-
-
+if (!config.itau.pixChave) console.warn('[CONFIG] ITAU_PIX_CHAVE nao definida!');
 module.exports = config;
