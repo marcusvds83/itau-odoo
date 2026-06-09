@@ -1,6 +1,6 @@
 {
   "name": "middleware-itau-odoo",
-  "version": "6.3.0",
+  "version": "6.4.0",
   "description": "Middleware Itau-Odoo - AJL Ferro e Aco",
   "main": "server.js",
   "scripts": {
@@ -13,6 +13,7 @@
     "cors": "^2.8.5",
     "morgan": "^1.10.0",
     "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
     "pdfkit": "^0.15.0",
     "bwip-js": "^4.1.0"
   }
