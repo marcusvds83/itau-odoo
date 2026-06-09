@@ -98,35 +98,55 @@ function drawValue(doc, x, y, w, text, opts) {
 
 /* === HEADER DO BOLETO === */
 
+function drawItauLogo(doc, x, y) {
+  // Bloco retangular com 4 faixas coloridas (estilo logo Itau)
+  var bw = 8;   // largura do bloco
+  var bh = 28;  // altura do bloco
+  var faixas = [
+    { c: '#003DA5', h: bh * 0.32 },  // azul escuro (topo)
+    { c: '#F68B1F', h: bh * 0.22 },  // laranja
+    { c: '#009B3A', h: bh * 0.22 },  // verde
+    { c: '#ED1C24', h: bh * 0.24 }   // vermelho
+  ];
+  var fy = y;
+  for (var i = 0; i < faixas.length; i++) {
+    doc.rect(x, fy, bw, faixas[i].h).fill(faixas[i].c);
+    fy += faixas[i].h;
+  }
+
+  // Texto "itaú" ao lado do bloco
+  doc.fillColor('#003DA5').fontSize(14).font('Helvetica-Bold');
+  doc.text('itaú', x + bw + 4, y + 2, { width: 80, lineBreak: false });
+
+  // Texto "Banco Itaú S.A." abaixo em menor
+  doc.fillColor('#333').fontSize(6).font('Helvetica');
+  doc.text('Banco Itaú S.A.', x + bw + 4, y + 17, { width: 100, lineBreak: false });
+}
+
 function drawHeader(doc, x, y, pw, dados) {
   // Linha superior grossa
   doc.moveTo(x, y).lineTo(x + pw, y).lineWidth(1.5).stroke('#333');
   y += 2;
 
-  // Logotipo area
-  doc.fillColor('#EC0000').fontSize(16).font('Helvetica-Bold');
-  doc.text('BANCO ITA', x + 4, y, { width: 120, lineBreak: false });
-
-  // Nome do banco menor ao lado
-  doc.fillColor('#333').fontSize(8).font('Helvetica-Bold');
-  doc.text('BANCO ITAU S.A.', x + 4, y + 18, { width: 200, lineBreak: false });
+  // Logo Itaú (vetorial)
+  drawItauLogo(doc, x + 4, y + 2);
 
   // Linha vertical separando logo do restante
-  vLine(doc, x + 130, y, y + 34);
+  vLine(doc, x + 110, y, y + 34);
 
-  // Campo Codigo do Banco (direita do logo)
-  drawLabel(doc, x + 136, y, 80, 'Codigo do Banco');
-  drawValue(doc, x + 136, y + 7, 80, '341-7', { bold: true, size: F_BOLD_VAL });
+  // Campo Codigo do Banco
+  drawLabel(doc, x + 116, y, 80, 'Codigo do Banco');
+  drawValue(doc, x + 116, y + 7, 80, '341-7', { bold: true, size: F_BOLD_VAL });
 
-  // Campo Especie do Documento (direita)
-  drawLabel(doc, x + 260, y, 80, 'Especie Doc.');
-  drawValue(doc, x + 260, y + 7, 80, 'R$');
+  // Campo Especie do Documento
+  drawLabel(doc, x + 240, y, 80, 'Especie Doc.');
+  drawValue(doc, x + 240, y + 7, 80, 'R$');
 
-  // Campo Numero do Documento (direita)
-  drawLabel(doc, x + 370, y, 100, 'Numero do Documento');
-  drawValue(doc, x + 370, y + 7, 100, dados.seu_numero || '');
+  // Campo Numero do Documento
+  drawLabel(doc, x + 350, y, 100, 'Numero do Documento');
+  drawValue(doc, x + 350, y + 7, 100, dados.seu_numero || '');
 
-  // Campo Data Vencimento (direita)
+  // Campo Data Vencimento
   drawLabel(doc, x + 478, y, 95, 'Vencimento');
   drawValue(doc, x + 478, y + 7, 95, fmtData(dados.data_vencimento), { bold: true, size: F_BOLD_VAL, color: '#CC0000' });
 
