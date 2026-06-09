@@ -1,30 +1,23 @@
 /**
- * routes/boletos.js - v6.1
+ * routes/boletos.js - v6.4
+ * Rotas de boletos: GET PDF, consulta
  */
 const express = require('express');
 const router = express.Router();
 const { authenticateApiKey } = require('../middleware/auth');
-const { emitirBoleto, consultarBoleto } = require('../services/itau-boleto');
+const { generatePdf } = require('../services/pdf-boleto');
 
-router.post('/emitir', authenticateApiKey, async (req, res) => {
+router.get('/pdf/:txid', async (req, res) => {
   try {
-    const dados = req.body;
-    const resultado = await emitirBoleto(dados);
-    res.json({ sucesso: true, mensagem: 'Boleto emitido com sucesso', dados: resultado.dados });
+    const txid = req.params.txid;
+    console.log('[BOLETOS] PDF solicitado TXID:', txid);
+    const pdfBuffer = await generatePdf(txid);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="boleto-' + txid + '.pdf"');
+    res.send(pdfBuffer);
   } catch (error) {
-    console.error('[ROTA /boletos/emitir] Erro:', error.message);
-    res.status(500).json({ sucesso: false, erro: error.message });
-  }
-});
-
-router.get('/:txid', authenticateApiKey, async (req, res) => {
-  try {
-    const { txid } = req.params;
-    const resultado = await consultarBoleto(txid);
-    res.json({ sucesso: true, dados: resultado.dados });
-  } catch (error) {
-    console.error('[ROTA /boletos/:txid] Erro:', error.message);
-    res.status(500).json({ sucesso: false, erro: error.message });
+    console.error('[BOLETOS] Erro PDF:', error.message);
+    res.status(404).json({ erro: 'Boleto nao encontrado' });
   }
 });
 

@@ -1,27 +1,19 @@
 {
   "name": "middleware-itau-odoo",
-  "version": "5.0.0",
-  "description": "Middleware de integracao entre Odoo 19 SaaS e APIs do Itau (Boleto, PIX, Cartao) - v5 Producao",
+  "version": "6.3.0",
+  "description": "Middleware Itau-Odoo - AJL Ferro e Aco",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "axios": "^1.6.0",
+    "express-rate-limit": "^6.7.0",
+    "helmet": "^7.0.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
     "morgan": "^1.10.0",
-    "helmet": "^7.1.0",
-    "express-rate-limit": "^7.1.4",
-    "uuid": "^9.0.0",
-    "dayjs": "^1.11.10"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "axios": "^1.6.0",
+    "pdfkit": "^0.15.0",
+    "bwip-js": "^4.1.0"
   }
 }
