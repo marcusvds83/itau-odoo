@@ -1,10 +1,12 @@
 /**
- * services/pdf-boleto.js - v6.5 FEBRABAN
- * Gerador de PDF de Boleto Bancario no layout FEBRABAN padrao Itau
- * - Recibo do Sacado (parte 1)
- * - Ficha de Compensacao (parte 2)
- * - QR Code PIX + Copia e Cola
- * - Barcode Code128 via bwip-js (callback-based, sem toBufferSync)
+ * services/pdf-boleto.js - v6.6 FEBRABAN Itau Padrao
+ * Layout padrao FEBRABAN com:
+ * - Recibo do Sacado + Ficha de Compensacao
+ * - Linhas horizontais (sem caixas grandes)
+ * - Codigo de barras Code128
+ * - Linha digitavel ao lado do barcode
+ * - QR Code PIX + Copia e Cola na parte inferior
+ * - bwip-js callback-based
  */
 var PDFDocument = require('pdfkit');
 var bwipjs = null;
@@ -42,7 +44,7 @@ function fmtValor(v) {
   return parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + parts[1];
 }
 
-/* Barcode Code128 - bwip-js usa callback, NAO toBufferSync */
+/* Barcode Code128 - bwip-js callback */
 function genBarcode(text) {
   return new Promise(function (resolve) {
     if (!bwipjs) { resolve(null); return; }
@@ -52,7 +54,7 @@ function genBarcode(text) {
   });
 }
 
-/* QR Code - bwip-js usa callback */
+/* QR Code - bwip-js callback */
 function genQRCode(text) {
   return new Promise(function (resolve) {
     if (!bwipjs) { resolve(null); return; }
@@ -62,172 +64,279 @@ function genQRCode(text) {
   });
 }
 
-/* === FUNCOES DE DESENHO FEBRABAN === */
+/* === CONSTANTES DE LAYOUT === */
+var LM = 10;       // left margin
+var PW = 575;      // page usable width (A4 = 595 - margins)
+var RH = 13;       // row height
+var F_LABEL = 5.5; // font size label
+var F_VAL = 8;     // font size value
+var F_BOLD_VAL = 9;
+var LINE_W = 0.4;
 
-function drawCabecalho(doc, x, y, pw, dados) {
-  doc.rect(x, y, pw, 32).fill('#EC0000');
-  doc.fillColor('#fff').fontSize(15).font('Helvetica-Bold');
-  doc.text('BANCO ITAU S.A.', x + 8, y + 2, { width: 180 });
-  doc.fontSize(11).font('Helvetica');
-  doc.text('341-7', x + 8, y + 18, { width: 180 });
+/* === FUNCOES AUXILIARES === */
 
-  doc.fontSize(7).font('Helvetica-Bold');
-  doc.text(dados.nome_beneficiario || 'AJL COM. ATAC. FERRAGENS E FERRAMENTAS LTDA', x + 200, y + 3, { width: pw - 215 });
-  doc.font('Helvetica').fontSize(6);
-  doc.text('CNPJ: ' + (dados.cnpj_beneficiario || '22.603.750/0001-90'), x + 200, y + 13, { width: pw - 215 });
-  doc.text('Ag: ' + (dados.agencia || '7764') + '  CC: ' + (dados.conta || '22338-9'), x + 200, y + 21, { width: pw - 215 });
-
-  doc.rect(x, y + 32, pw, 16).fill('#f5f5f5').stroke('#999');
-  doc.fillColor('#333').fontSize(6).font('Helvetica-Bold');
-  doc.text('Agencia/Codigo Cedente', x + 4, y + 36, { width: 130 });
-  doc.fillColor('#000').fontSize(8).font('Helvetica-Bold');
-  doc.text((dados.agencia || '7764') + '/' + (dados.id_beneficiario || '776400223389'), x + 140, y + 35, { width: 200 });
-  doc.fillColor('#333').fontSize(6).font('Helvetica-Bold');
-  doc.text('Nosso Numero', x + 360, y + 36, { width: 100 });
-  doc.fillColor('#000').fontSize(8);
-  doc.text(dados.nosso_numero || '', x + 460, y + 35, { width: pw - 470 });
-
-  return y + 50;
+function hLine(doc, x, y, w) {
+  doc.moveTo(x, y).lineTo(x + w, y).lineWidth(LINE_W).stroke('#333');
 }
 
-function drawRow(doc, x, y, pw, lbl, val, rLbl, rVal, bg) {
-  doc.rect(x, y, pw, 12).fill(bg || '#fff').stroke('#999');
-  doc.fillColor('#333').fontSize(6).font('Helvetica-Bold');
-  doc.text(lbl, x + 4, y + 3, { width: 120 });
-  doc.fillColor('#000').fontSize(7).font('Helvetica');
-  doc.text(val || '', x + 4, y + 3, { width: 280 });
-  if (rLbl) {
-    doc.fillColor('#333').fontSize(6).font('Helvetica-Bold');
-    doc.text(rLbl, x + pw - 180, y + 3, { width: 100 });
-    var isValor = rLbl.indexOf('Valor') >= 0;
-    doc.fillColor(isValor ? '#EC0000' : '#000');
-    doc.fontSize(isValor ? 10 : 7);
-    if (isValor) doc.font('Helvetica-Bold');
-    doc.text(rVal || '', x + pw - 80, y + 2, { width: 75 });
-  }
-  doc.font('Helvetica');
-  doc.fillColor('#000');
-  return y + 12;
+function vLine(doc, x, y1, y2) {
+  doc.moveTo(x, y1).lineTo(x, y2).lineWidth(LINE_W).stroke('#333');
 }
 
-function drawTabelaSacado(doc, x, y, pw, dados) {
-  y = drawRow(doc, x, y, pw, 'Local de Pagamento', 'Pagavel em qualquer banco ate o vencimento', 'Vencimento', fmtData(dados.data_vencimento));
-  y = drawRow(doc, x, y, pw, 'Cedente', dados.nome_beneficiario || 'AJL COM. ATAC. FERRAGENS E FERRAMENTAS LTDA', 'Agencia/Codigo Cedente', (dados.agencia || '7764') + '/' + (dados.id_beneficiario || '776400223389'), '#fafafa');
-  y = drawRow(doc, x, y, pw, 'Data Doc.', fmtData(dados.data_emissao || dados.data_vencimento), 'No. Documento', dados.seu_numero);
-  y = drawRow(doc, x, y, pw, 'Especie', 'R$', 'Aceite', 'N/A', '#fafafa');
-  y = drawRow(doc, x, y, pw, 'Uso do Banco', '-', null, null);
-  y = drawRow(doc, x, y, pw, 'Nosso Numero', (dados.agencia || '7764') + '/' + (dados.carteira || '109') + '/' + (dados.nosso_numero || ''), '(=) Valor do Documento', 'R$ ' + fmtValor(dados.valor_titulo), '#fafafa');
+function drawLabel(doc, x, y, w, text) {
+  doc.fillColor('#333').fontSize(F_LABEL).font('Helvetica-Bold');
+  doc.text(text, x, y, { width: w, lineBreak: false });
+}
+
+function drawValue(doc, x, y, w, text, opts) {
+  var bold = opts && opts.bold;
+  var size = opts && opts.size ? opts.size : F_VAL;
+  var color = opts && opts.color ? opts.color : '#000';
+  doc.fillColor(color).fontSize(size).font(bold ? 'Helvetica-Bold' : 'Helvetica');
+  doc.text(text || '', x, y, { width: w, lineBreak: false });
+}
+
+/* === HEADER DO BOLETO === */
+
+function drawHeader(doc, x, y, pw, dados) {
+  // Linha superior grossa
+  doc.moveTo(x, y).lineTo(x + pw, y).lineWidth(1.5).stroke('#333');
+  y += 2;
+
+  // Logotipo area
+  doc.fillColor('#EC0000').fontSize(16).font('Helvetica-Bold');
+  doc.text('BANCO ITA', x + 4, y, { width: 120, lineBreak: false });
+
+  // Nome do banco menor ao lado
+  doc.fillColor('#333').fontSize(8).font('Helvetica-Bold');
+  doc.text('BANCO ITAU S.A.', x + 4, y + 18, { width: 200, lineBreak: false });
+
+  // Linha vertical separando logo do restante
+  vLine(doc, x + 130, y, y + 34);
+
+  // Campo Codigo do Banco (direita do logo)
+  drawLabel(doc, x + 136, y, 80, 'Codigo do Banco');
+  drawValue(doc, x + 136, y + 7, 80, '341-7', { bold: true, size: F_BOLD_VAL });
+
+  // Campo Especie do Documento (direita)
+  drawLabel(doc, x + 260, y, 80, 'Especie Doc.');
+  drawValue(doc, x + 260, y + 7, 80, 'R$');
+
+  // Campo Numero do Documento (direita)
+  drawLabel(doc, x + 370, y, 100, 'Numero do Documento');
+  drawValue(doc, x + 370, y + 7, 100, dados.seu_numero || '');
+
+  // Campo Data Vencimento (direita)
+  drawLabel(doc, x + 478, y, 95, 'Vencimento');
+  drawValue(doc, x + 478, y + 7, 95, fmtData(dados.data_vencimento), { bold: true, size: F_BOLD_VAL, color: '#CC0000' });
+
+  // Linha inferior do header
+  y += 36;
+  doc.moveTo(x, y).lineTo(x + pw, y).lineWidth(1.5).stroke('#333');
+  return y + 3;
+}
+
+/* === TABELA DO BOLETO (linhas horizontais, campos lado a lado) === */
+
+function drawTableSacado(doc, x, y, pw, dados) {
+  // Linha 1: Local de Pagamento (esq) | Vencimento (dir)
+  hLine(doc, x, y, pw);
+  drawLabel(doc, x + 2, y + 1, 200, 'Local de Pagamento');
+  drawValue(doc, x + 2, y + 6, 350, 'Pagavel em qualquer banco ate o vencimento');
+  drawLabel(doc, x + 400, y + 1, 80, 'Vencimento');
+  drawValue(doc, x + 400, y + 6, 80, fmtData(dados.data_vencimento), { bold: true });
+  y += RH + 1;
+
+  // Linha 2: Cedente (esq) | Agencia/Codigo Cedente (dir)
+  hLine(doc, x, y, pw);
+  drawLabel(doc, x + 2, y + 1, 50, 'Cedente');
+  drawValue(doc, x + 2, y + 6, 350, dados.nome_beneficiario || 'AJL COM. ATAC. FERRAGENS E FERRAMENTAS LTDA');
+  drawLabel(doc, x + 400, y + 1, 90, 'Agencia/Codigo Cedente');
+  drawValue(doc, x + 400, y + 6, 90, (dados.agencia || '7764') + '/' + (dados.id_beneficiario || '776400223389'));
+  y += RH + 1;
+
+  // Linha 3: Data Documento | No Documento | Especie | Aceite | Carteira
+  hLine(doc, x, y, pw);
+  drawLabel(doc, x + 2, y + 1, 60, 'Data Doc.');
+  drawValue(doc, x + 2, y + 6, 55, fmtData(dados.data_emissao || dados.data_vencimento));
+  drawLabel(doc, x + 75, y + 1, 50, 'No.Documento');
+  drawValue(doc, x + 75, y + 6, 55, dados.seu_numero || '');
+  drawLabel(doc, x + 150, y + 1, 40, 'Especie');
+  drawValue(doc, x + 150, y + 6, 30, 'R$');
+  drawLabel(doc, x + 190, y + 1, 35, 'Aceite');
+  drawValue(doc, x + 190, y + 6, 30, 'N/A');
+  drawLabel(doc, x + 230, y + 1, 40, 'Carteira');
+  drawValue(doc, x + 230, y + 6, 35, dados.carteira || '109');
+  // Nosso Numero (direita)
+  drawLabel(doc, x + 340, y + 1, 60, 'Nosso Numero');
+  drawValue(doc, x + 340, y + 6, 100, dados.nosso_numero || '', { bold: true });
+  y += RH + 1;
+
+  // Linha 4: Uso do Banco (esq) | Valor do Documento (dir)
+  hLine(doc, x, y, pw);
+  drawLabel(doc, x + 2, y + 1, 60, 'Uso do Banco');
+  drawValue(doc, x + 2, y + 6, 60, '-', { color: '#999' });
+  drawLabel(doc, x + 400, y + 1, 95, '(=) Valor do Documento');
+  drawValue(doc, x + 400, y + 5, 95, 'R$ ' + fmtValor(dados.valor_titulo), { bold: true, size: 11, color: '#CC0000' });
+  y += RH + 2;
   return y;
 }
 
-function drawTabelaCompensacao(doc, x, y, pw, dados) {
-  y = drawRow(doc, x, y, pw, 'Local de Pagamento', 'Pagavel em qualquer banco ate o vencimento', 'Vencimento', fmtData(dados.data_vencimento));
-  y = drawRow(doc, x, y, pw, 'Cedente', dados.nome_beneficiario || 'AJL COM. ATAC. FERRAGENS E FERRAMENTAS LTDA', 'Agencia/Codigo Cedente', (dados.agencia || '7764') + '/' + (dados.id_beneficiario || '776400223389'), '#fafafa');
-  y = drawRow(doc, x, y, pw, 'Data Doc.', fmtData(dados.data_emissao || dados.data_vencimento), 'No. Documento', dados.seu_numero);
-  y = drawRow(doc, x, y, pw, 'Especie', 'R$', 'Aceite', 'N/A', '#fafafa');
-  y = drawRow(doc, x, y, pw, 'Uso do Banco', '-', 'Data Proc.', fmtData(dados.data_emissao || ''), '#fafafa');
-  y = drawRow(doc, x, y, pw, 'Nosso Numero', (dados.agencia || '7764') + '/' + (dados.carteira || '109') + '/' + (dados.nosso_numero || ''), '(=) Valor do Documento', 'R$ ' + fmtValor(dados.valor_titulo), '#fafafa');
+function drawTableCompensacao(doc, x, y, pw, dados) {
+  // Linha 1: Local de Pagamento | Vencimento
+  hLine(doc, x, y, pw);
+  drawLabel(doc, x + 2, y + 1, 200, 'Local de Pagamento');
+  drawValue(doc, x + 2, y + 6, 350, 'Pagavel em qualquer banco ate o vencimento');
+  drawLabel(doc, x + 400, y + 1, 80, 'Vencimento');
+  drawValue(doc, x + 400, y + 6, 80, fmtData(dados.data_vencimento), { bold: true });
+  y += RH + 1;
+
+  // Linha 2: Cedente | Agencia/Codigo
+  hLine(doc, x, y, pw);
+  drawLabel(doc, x + 2, y + 1, 50, 'Cedente');
+  drawValue(doc, x + 2, y + 6, 350, dados.nome_beneficiario || 'AJL COM. ATAC. FERRAGENS E FERRAMENTAS LTDA');
+  drawLabel(doc, x + 400, y + 1, 90, 'Agencia/Codigo Cedente');
+  drawValue(doc, x + 400, y + 6, 90, (dados.agencia || '7764') + '/' + (dados.id_beneficiario || '776400223389'));
+  y += RH + 1;
+
+  // Linha 3: Data Doc | No Doc | Especie | Aceite | Data Proc | Carteira
+  hLine(doc, x, y, pw);
+  drawLabel(doc, x + 2, y + 1, 45, 'Data Doc.');
+  drawValue(doc, x + 2, y + 6, 50, fmtData(dados.data_emissao || dados.data_vencimento));
+  drawLabel(doc, x + 60, y + 1, 45, 'No.Documento');
+  drawValue(doc, x + 60, y + 6, 50, dados.seu_numero || '');
+  drawLabel(doc, x + 120, y + 1, 35, 'Especie');
+  drawValue(doc, x + 120, y + 6, 25, 'R$');
+  drawLabel(doc, x + 150, y + 1, 30, 'Aceite');
+  drawValue(doc, x + 150, y + 6, 25, 'N/A');
+  drawLabel(doc, x + 180, y + 1, 50, 'Data Proc.');
+  drawValue(doc, x + 180, y + 6, 50, fmtData(dados.data_emissao || ''));
+  drawLabel(doc, x + 340, y + 1, 60, 'Nosso Numero');
+  drawValue(doc, x + 340, y + 6, 100, dados.nosso_numero || '', { bold: true });
+  y += RH + 1;
+
+  // Linha 4: Uso do Banco | Valor
+  hLine(doc, x, y, pw);
+  drawLabel(doc, x + 2, y + 1, 60, 'Uso do Banco');
+  drawValue(doc, x + 2, y + 6, 60, '-', { color: '#999' });
+  drawLabel(doc, x + 400, y + 1, 95, '(=) Valor do Documento');
+  drawValue(doc, x + 400, y + 5, 95, 'R$ ' + fmtValor(dados.valor_titulo), { bold: true, size: 11, color: '#CC0000' });
+  y += RH + 2;
   return y;
 }
+
+/* === PAGADOR === */
 
 function drawPagador(doc, x, y, pw, dados) {
-  var h = 44;
-  doc.rect(x, y, pw, h).fill('#fff').stroke('#999');
-  doc.fillColor('#333').fontSize(6).font('Helvetica-Bold');
-  doc.text('Pagador', x + 4, y + 3, { width: 60 });
-  doc.fillColor('#000').fontSize(8).font('Helvetica-Bold');
-  doc.text(dados.nome_pagador || '', x + 4, y + 13, { width: pw - 10 });
-  doc.fillColor('#000').fontSize(7).font('Helvetica');
-  doc.text((dados.tipo_pessoa === 'F' ? 'CPF: ' : 'CNPJ: ') + formatCnpj(dados.cpf_cnpj_pagador), x + 4, y + 24, { width: pw - 10 });
-  doc.text([dados.logradouro, dados.cidade, dados.estado, dados.cep].filter(Boolean).join(' - '), x + 4, y + 34, { width: pw - 10 });
-  doc.font('Helvetica');
-  return y + h + 2;
+  hLine(doc, x, y, pw);
+  drawLabel(doc, x + 2, y + 1, 50, 'Pagador');
+  drawValue(doc, x + 2, y + 6, pw - 10, dados.nome_pagador || '', { bold: true, size: F_VAL });
+  y += RH;
+
+  var docLabel = dados.tipo_pessoa === 'F' ? 'CPF' : 'CNPJ';
+  var endParts = [dados.logradouro, dados.cidade, dados.estado, dados.cep].filter(Boolean);
+  drawValue(doc, x + 2, y + 2, 250, docLabel + ': ' + formatCnpj(dados.cpf_cnpj_pagador));
+  drawValue(doc, x + 260, y + 2, pw - 270, endParts.join(' - '));
+  y += RH;
+  hLine(doc, x, y, pw);
+  return y + 3;
 }
+
+/* === SACADOR/AVALISTA === */
 
 function drawAvalista(doc, x, y, pw) {
-  doc.rect(x, y, pw, 14).fill('#fff').stroke('#999');
-  doc.fillColor('#333').fontSize(6).font('Helvetica-Bold');
-  doc.text('Sacador/Avalista', x + 4, y + 3, { width: 80 });
-  doc.fillColor('#999').fontSize(7).font('Helvetica');
-  doc.text('-', x + 60, y + 3, { width: 50 });
-  doc.font('Helvetica');
-  return y + 16;
+  hLine(doc, x, y, pw);
+  drawLabel(doc, x + 2, y + 1, 80, 'Sacador/Avalista');
+  drawValue(doc, x + 2, y + 6, 200, '-', { color: '#999' });
+  y += RH;
+  hLine(doc, x, y, pw);
+  return y + 3;
 }
 
-function drawBarcode(doc, x, y, pw, barcodeBuf, barcodeText) {
-  var bh = barcodeBuf ? 55 : 26;
-  doc.rect(x, y, pw, bh).fill('#fff').stroke('#ccc');
+/* === CODIGO DE BARRAS + LINHA DIGITAVEL === */
+
+function drawBarcodeLinha(doc, x, y, pw, barcodeBuf, barcodeText, dados) {
+  // Codigo de barras (area maior)
+  var bcH = 50;
+  doc.rect(x, y, pw, bcH).lineWidth(0.3).stroke('#333');
   if (barcodeBuf) {
-    doc.image(barcodeBuf, x + 8, y + 3, { width: pw - 16, height: 49 });
+    doc.image(barcodeBuf, x + 10, y + 5, { width: pw - 20, height: bcH - 10 });
   } else if (barcodeText) {
-    doc.fillColor('#000').fontSize(6).font('Courier');
-    doc.text(barcodeText, x + 4, y + 9, { width: pw - 8, align: 'center', lineBreak: false });
+    doc.fillColor('#000').fontSize(5).font('Courier');
+    doc.text(barcodeText, x + 10, y + 20, { width: pw - 20, align: 'center', lineBreak: false });
     doc.font('Helvetica');
   }
-  return y + bh + 2;
+  y += bcH + 3;
+
+  // Linha Digitavel (texto abaixo do barcode)
+  hLine(doc, x, y, pw);
+  drawLabel(doc, x + 2, y + 1, 80, 'Linha Digitavel');
+  drawValue(doc, x + 2, y + 6, pw - 10, dados.linha_digitavel || '', { size: 8, bold: true });
+  y += RH;
+  hLine(doc, x, y, pw);
+
+  // Autenticacao Mecanica
+  y += 3;
+  drawLabel(doc, x + 2, y, 200, 'Autenticacao Mecanica - Ficha de Compensacao');
+
+  return y + 10;
 }
 
-function drawLinhaDigitavel(doc, x, y, pw, dados) {
-  doc.rect(x, y, pw, 24).fill('#f0fff0').stroke('#00aa00');
-  doc.fillColor('#005500').fontSize(6).font('Helvetica-Bold');
-  doc.text('Linha Digitavel', x + 4, y + 3);
-  doc.fillColor('#005500').fontSize(13).font('Courier-Bold');
-  doc.text(dados.linha_digitavel || '', x + 4, y + 10, { width: pw - 8, align: 'center', lineBreak: false });
-  doc.font('Helvetica');
-  return y + 26;
-}
+/* === SECAO PIX (QR Code + Copia e Cola) - so na ficha compensacao === */
 
-function drawInstrucoes(doc, x, y, pw, dados, qrBuf) {
+function drawPix(doc, x, y, pw, dados, qrBuf) {
   var pix = dados.pix_copia_cola || '';
   var hasPix = pix || qrBuf;
-  var bh = hasPix ? 125 : 20;
+  if (!hasPix) return y;
 
-  doc.rect(x, y, pw, bh).fill('#fff').stroke('#999');
-  doc.fillColor('#333').fontSize(6).font('Helvetica-Bold');
-  doc.text('Instrucoes (Texto de responsabilidade do cedente)', x + 4, y + 3, { width: pw - 10 });
+  hLine(doc, x, y, pw);
+  y += 4;
 
-  if (hasPix) {
-    if (qrBuf) {
-      try { doc.image(qrBuf, x + 8, y + 16, { width: 80, height: 80 }); } catch (e) {}
-    }
-    doc.fillColor('#EC0000').fontSize(8).font('Helvetica-Bold');
-    doc.text('PAGAMENTO VIA PIX', x + 100, y + 16, { width: pw - 115 });
-    doc.fillColor('#333').fontSize(6).font('Helvetica');
-    doc.text('Escaneie o QR Code ou copie o codigo abaixo', x + 100, y + 28, { width: pw - 115 });
-    doc.text('para pagar instantaneamente com PIX.', x + 100, y + 38, { width: pw - 115 });
-    doc.rect(x + 100, y + 50, pw - 115, 40).fill('#f5f5ff').stroke('#9999cc');
-    doc.fillColor('#333').fontSize(5).font('Helvetica-Bold');
-    doc.text('PIX Copia e Cola:', x + 105, y + 53, { width: pw - 125 });
-    doc.fillColor('#000').fontSize(5).font('Courier');
-    doc.text(pix, x + 105, y + 62, { width: pw - 130 });
-    doc.fillColor('#999').fontSize(5);
-    doc.text('TXID: ' + (dados.txid || ''), x + 100, y + 95, { width: pw - 115 });
-  } else {
-    doc.fillColor('#999').fontSize(6).font('Helvetica');
-    doc.text('Nao efetuar pagamento apos vencimento.', x + 4, y + 3, { width: pw - 10 });
+  // QR Code (lado esquerdo)
+  if (qrBuf) {
+    try {
+      doc.image(qrBuf, x + 10, y, { width: 75, height: 75 });
+    } catch (e) {}
   }
 
+  // Textos PIX (lado direito do QR)
+  doc.fillColor('#333').fontSize(7).font('Helvetica-Bold');
+  doc.text('Pagamento via PIX', x + 95, y + 2, { width: 200 });
+  doc.font('Helvetica').fontSize(5.5);
+  doc.text('Escaneie o QR Code ou copie o codigo abaixo', x + 95, y + 12, { width: 300 });
+  doc.text('para pagar instantaneamente com PIX.', x + 95, y + 21, { width: 300 });
+
+  // Caixa do Copia e Cola
+  var ccY = y + 30;
+  var ccW = pw - 100;
+  var ccH = 30;
+  doc.rect(x + 95, ccY, ccW, ccH).fill('#f8f8ff').lineWidth(0.3).stroke('#666');
+  doc.fillColor('#333').fontSize(5).font('Helvetica-Bold');
+  doc.text('PIX Copia e Cola:', x + 100, ccY + 2, { width: ccW - 10 });
+  doc.fillColor('#000').fontSize(4.5).font('Courier');
+  doc.text(pix, x + 100, ccY + 10, { width: ccW - 15 });
   doc.font('Helvetica');
-  return y + bh + 2;
+
+  // TXID
+  doc.fillColor('#999').fontSize(4.5);
+  doc.text('TXID: ' + (dados.txid || ''), x + 95, y + 68, { width: 300 });
+
+  return y + 82;
 }
+
+/* === SEPARADOR RECIBO / COMPENSACAO === */
 
 function drawCorte(doc, x, y, pw) {
-  doc.moveTo(x, y).lineTo(x + pw, y).lineWidth(0.8).dash(3, { space: 2 }).stroke('#666');
+  doc.moveTo(x, y).lineTo(x + pw, y).lineWidth(0.5).dash(4, { space: 2 }).stroke('#666');
   doc.undash();
-  doc.fillColor('#999').fontSize(5).font('Helvetica');
-  doc.text('FICHA DE COMPENSACAO - BANCO', x + 4, y + 3, { width: pw - 10, align: 'center' });
-  doc.font('Helvetica');
-  return y + 12;
+  return y + 5;
 }
 
-/* === MONTAGEM DO PDF === */
+/* === MONTAGEM PRINCIPAL === */
 
 async function drawBoleto(doc, dados) {
-  var W = doc.page.width;
-  var M = 18;
-  var pw = W - M * 2;
-  var x = M;
-  var y = M;
+  var x = LM;
+  var y = LM;
 
   // Pre-gerar barcode e QR code
   var barcodeText = dados.codigo_barras || '';
@@ -238,29 +347,27 @@ async function drawBoleto(doc, dados) {
     qrBuf = await genQRCode(dados.pix_copia_cola);
   }
 
-  doc.font('Helvetica');
-  doc.fontSize(8);
+  // ===== RECIBO DO SACADO =====
+  y = drawHeader(doc, x, y, PW, dados);
+  y = drawTableSacado(doc, x, y, PW, dados);
+  y = drawPagador(doc, x, y, PW, dados);
+  y = drawBarcodeLinha(doc, x, y, PW, barcodeBuf, barcodeText, dados);
 
-  // RECIBO DO SACADO
-  y = drawCabecalho(doc, x, y, pw, dados);
-  y = drawTabelaSacado(doc, x, y, pw, dados);
-  y = drawPagador(doc, x, y, pw, dados);
-  y = drawBarcode(doc, x, y, pw, barcodeBuf, barcodeText);
-  y = drawLinhaDigitavel(doc, x, y, pw, dados);
-  y = drawInstrucoes(doc, x, y, pw, dados, qrBuf);
+  // ===== CORTE =====
+  y = drawCorte(doc, x, y, PW);
 
-  // CORTE
-  y = drawCorte(doc, x, y, pw);
+  // ===== FICHA DE COMPENSACAO =====
+  y = drawHeader(doc, x, y, PW, dados);
+  y = drawTableCompensacao(doc, x, y, PW, dados);
+  y = drawPagador(doc, x, y, PW, dados);
+  y = drawAvalista(doc, x, y, PW);
+  y = drawBarcodeLinha(doc, x, y, PW, barcodeBuf, barcodeText, dados);
+  y = drawPix(doc, x, y, PW, dados, qrBuf);
 
-  // FICHA DE COMPENSACAO
-  y = drawCabecalho(doc, x, y, pw, dados);
-  y = drawTabelaCompensacao(doc, x, y, pw, dados);
-  y = drawPagador(doc, x, y, pw, dados);
-  y = drawAvalista(doc, x, y, pw);
-  y = drawBarcode(doc, x, y, pw, barcodeBuf, barcodeText);
-  y = drawLinhaDigitavel(doc, x, y, pw, dados);
+  // Linha final
+  hLine(doc, x, y, PW);
 
-  return y;
+  return y + 5;
 }
 
 async function buildPdfBuffer(dados) {
@@ -268,16 +375,15 @@ async function buildPdfBuffer(dados) {
     try {
       var doc = new PDFDocument({
         size: 'A4',
-        margins: { top: 10, bottom: 10, left: 10, right: 10 },
+        margins: { top: 5, bottom: 5, left: LM, right: LM },
         info: { Title: 'Boleto ' + (dados.nosso_numero || ''), Author: 'AJL Ferro e Aco' }
       });
       var chunks = [];
       doc.on('data', function (chunk) { chunks.push(chunk); });
 
       drawBoleto(doc, dados).then(function (finalY) {
-        doc.moveTo(18, finalY).lineTo(doc.page.width - 18, finalY).lineWidth(0.5).stroke('#ccc');
-        doc.fillColor('#999').fontSize(5);
-        doc.text('Emitido por AJL Ferro e Aco | Boleto gerado via API BoleCode Itau', 18, finalY + 4, { width: doc.page.width - 36, align: 'center' });
+        doc.fillColor('#999').fontSize(4);
+        doc.text('Emitido por AJL Ferro e Aco | Boleto gerado via API BoleCode Itau', LM, finalY + 4, { width: PW, align: 'center' });
         doc.end();
         doc.on('end', function () { resolve(Buffer.concat(chunks)); });
       }).catch(reject);
