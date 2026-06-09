@@ -40,10 +40,10 @@ function parseValor(v) {
   return (reais + centavos / 100).toFixed(2);
 }
 
-async function generateBarcode(text) {
-  if (!bwipjs) return null;
+function generateBarcode(text) {
+  if (!bwipjs) return Promise.resolve(null);
   try {
-    return await bwipjs.toBuffer({
+    return bwipjs.toBuffer({
       bcid: 'code128',
       text: text,
       scale: 3,
@@ -52,13 +52,19 @@ async function generateBarcode(text) {
     });
   } catch (e) {
     console.log('[PDF-BOLETO] Barcode falhou:', e.message);
-    return null;
+    return Promise.resolve(null);
   }
 }
 
 async function generatePdf(txid) {
   const dados = getBoleto(txid);
   if (!dados) throw new Error('Boleto nao encontrado');
+
+  // Pre-generate barcode
+  let barcodePng = null;
+  if (dados.codigo_barras) {
+    barcodePng = await generateBarcode(dados.codigo_barras);
+  }
 
   return new Promise((resolve, reject) => {
     try {
@@ -92,7 +98,6 @@ async function generatePdf(txid) {
       doc.fillColor('#000');
       y += 30;
 
-      // Funcao auxiliar
       function field(label, value, yPos) {
         doc.rect(15, yPos, pw, 20).fill('#f8f8f8').stroke('#ccc');
         doc.fillColor('#666').fontSize(8).font('Helvetica');
@@ -114,17 +119,15 @@ async function generatePdf(txid) {
       field('TXID', dados.txid || '', y); y += 28;
 
       // Barcode
-      if (dados.codigo_barras) {
-        const barcodePng = await generateBarcode(dados.codigo_barras);
-        if (barcodePng) {
-          doc.image(barcodePng, 30, y, { width: pw - 30, height: 55 });
-        } else {
-          doc.rect(15, y, pw, 30).fill('#fff').stroke('#ddd');
-          doc.fillColor('#000').fontSize(7).font('Courier');
-          doc.text(dados.codigo_barras, 20, y + 10, { width: pw - 10, align: 'center' });
-          y -= 25;
-        }
+      if (barcodePng) {
+        doc.image(barcodePng, 30, y, { width: pw - 30, height: 55 });
         y += 60;
+      } else if (dados.codigo_barras) {
+        doc.rect(15, y, pw, 30).fill('#fff').stroke('#ddd');
+        doc.fillColor('#000').fontSize(7).font('Courier');
+        doc.text(dados.codigo_barras, 20, y + 10, { width: pw - 10, align: 'center' });
+        doc.font('Helvetica');
+        y += 35;
       }
 
       // Linha Digitavel
