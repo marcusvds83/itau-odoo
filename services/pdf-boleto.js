@@ -40,46 +40,38 @@ function parseValor(v) {
   return (reais + centavos / 100).toFixed(2);
 }
 
-function generateBarcode(text) {
-  if (!bwipjs) return Promise.resolve(null);
-  try {
-    return bwipjs.toBuffer({
-      bcid: 'code128',
-      text: text,
-      scale: 3,
-      height: 15,
-      includetext: false,
-    });
-  } catch (e) {
-    console.log('[PDF-BOLETO] Barcode falhou:', e.message);
-    return Promise.resolve(null);
-  }
-}
-
 async function generatePdf(txid) {
   const dados = getBoleto(txid);
   if (!dados) throw new Error('Boleto nao encontrado');
 
-  // Pre-generate barcode
-  let barcodePng = null;
-  if (dados.codigo_barras) {
-    barcodePng = await generateBarcode(dados.codigo_barras);
+  var barcodePng = null;
+  if (bwipjs && dados.codigo_barras) {
+    try {
+      barcodePng = bwipjs.toBufferSync({
+        bcid: 'code128',
+        text: dados.codigo_barras,
+        scale: 3,
+        height: 15,
+        includetext: false
+      });
+    } catch (e) {
+      console.log('[PDF-BOLETO] Barcode sync falhou:', e.message);
+    }
   }
 
-  return new Promise((resolve, reject) => {
+  return new Promise(function (resolve, reject) {
     try {
-      const doc = new PDFDocument({
+      var doc = new PDFDocument({
         size: 'A4',
         margins: { top: 15, bottom: 15, left: 15, right: 15 },
         info: { Title: 'Boleto ' + txid, Author: 'AJL Ferro e Aco' }
       });
-      const chunks = [];
-      doc.on('data', chunk => chunks.push(chunk));
+      var chunks = [];
+      doc.on('data', function (chunk) { chunks.push(chunk); });
 
-      const pw = doc.page.width - 30;
-      let y = 15;
+      var pw = doc.page.width - 30;
+      var y = 15;
 
-      // Header Itau vermelho
       doc.rect(15, y, pw, 50).fill('#EC0000');
       doc.fillColor('#fff').fontSize(16).font('Helvetica-Bold');
       doc.text('BANCO ITAU', 25, y + 8, { width: 200 });
@@ -91,7 +83,6 @@ async function generatePdf(txid) {
       doc.fillColor('#000');
       y += 60;
 
-      // Titulo
       doc.rect(15, y, pw, 22).fill('#333');
       doc.fillColor('#fff').fontSize(10).font('Helvetica-Bold');
       doc.text('BOLETO BANCARIO / PIX', 25, y + 5, { width: pw - 20, align: 'center' });
@@ -118,7 +109,6 @@ async function generatePdf(txid) {
       field('Seu Numero', dados.seu_numero || '', y); y += 22;
       field('TXID', dados.txid || '', y); y += 28;
 
-      // Barcode
       if (barcodePng) {
         doc.image(barcodePng, 30, y, { width: pw - 30, height: 55 });
         y += 60;
@@ -130,7 +120,6 @@ async function generatePdf(txid) {
         y += 35;
       }
 
-      // Linha Digitavel
       doc.rect(15, y, pw, 35).fill('#fffde8').stroke('#ccc');
       doc.fillColor('#333').fontSize(8).font('Helvetica-Bold');
       doc.text('Linha Digitavel:', 20, y + 3, { width: pw - 10 });
@@ -139,22 +128,19 @@ async function generatePdf(txid) {
       doc.font('Helvetica');
       y += 42;
 
-      // Separador PIX
       doc.moveTo(15, y).lineTo(15 + pw, y).lineWidth(2).dash(4, { space: 3 }).stroke('#EC0000');
       doc.undash();
       y += 10;
 
-      // PIX header
       doc.rect(15, y, pw, 22).fill('#333');
       doc.fillColor('#fff').fontSize(10).font('Helvetica-Bold');
       doc.text('PIX - PAGAMENTO INSTANTANEO', 25, y + 5, { width: pw - 20, align: 'center' });
       doc.fillColor('#000');
       y += 32;
 
-      // QR Code
       if (dados.qrcode_base64) {
         try {
-          const qrBuf = Buffer.from(dados.qrcode_base64, 'base64');
+          var qrBuf = Buffer.from(dados.qrcode_base64, 'base64');
           doc.image(qrBuf, 15, y, { width: 130, height: 130 });
           doc.fillColor('#333').fontSize(9).font('Helvetica-Bold');
           doc.text('Escaneie o QR Code', 160, y + 10, { width: pw - 170 });
@@ -167,7 +153,6 @@ async function generatePdf(txid) {
         y += 140;
       }
 
-      // PIX Copia e Cola
       doc.rect(15, y, pw, 40).fill('#f0f0f0').stroke('#ccc');
       doc.fillColor('#333').fontSize(8).font('Helvetica-Bold');
       doc.text('PIX Copia e Cola:', 20, y + 4, { width: pw - 10 });
@@ -176,14 +161,13 @@ async function generatePdf(txid) {
       doc.font('Helvetica');
       y += 50;
 
-      // Footer
       y = doc.page.height - 45;
       doc.moveTo(15, y).lineTo(15 + pw, y).lineWidth(0.5).stroke('#ccc');
       doc.fillColor('#999').fontSize(7);
       doc.text('AJL Ferro e Aco | ' + (dados.txid || '') + ' | ' + new Date().toISOString().split('T')[0], 20, y + 8, { width: pw - 10, align: 'center' });
 
       doc.end();
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('end', function () { resolve(Buffer.concat(chunks)); });
     } catch (err) {
       reject(err);
     }
