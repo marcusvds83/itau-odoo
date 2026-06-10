@@ -29,8 +29,8 @@ const config = {
     enabled: process.env.ODOO_PUSH_ENABLED === 'true',
     url: process.env.ODOO_URL || '',
     db: process.env.ODOO_DB || '',
-    user: process.env.ODOO_USER || '',
-    password: process.env.ODOO_PASSWORD || '',
+    user: process.env.ODOO_USERNAME || '',
+    password: process.env.ODOO_API_KEY || '',
   },
   createMtlsConfig() {
     const hasCert = !!(this.mtls.cert && this.mtls.key);
