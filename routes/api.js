@@ -12,7 +12,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticateApiKey } = require('../middleware/auth');
 const { emitirBoleto, parseFormaPagamento } = require('../services/itau-boleto');
-const { storeBoleto } = require('../services/pdf-boleto');
+const { storeBoleto, generatePdfFromFields } = require('../services/pdf-boleto');
 const { pushBoletosToOdoo } = require('../services/odoo-push');
 
 /** Reference to boleto routes for txid mapping */
@@ -324,6 +324,65 @@ router.post('/gerar', async function(req, res) {
 
   } catch (e) {
     console.error('[API/GERAR] ERRO:', e.message);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.send('ERRO|' + e.message);
+  }
+});
+
+/**
+ * POST /api/regen
+ * =============================================
+ * Regenera PDF de boleto a partir dos campos Odoo (sem chamar Itau)
+ * Aceita form-urlencoded (url_open do Odoo)
+ * Retorna texto plano: OK|<base64_pdf> ou ERRO|<mensagem>
+ * Uso: Acao Odoo "Baixar PDF" - para boletos ja gerados
+ * =============================================
+ */
+router.post('/regen', async function(req, res) {
+  try {
+    var nn = req.body.nosso_numero || '';
+    var ld = req.body.linha_digitavel || '';
+    var cb = req.body.codigo_barras || '';
+    var pix = req.body.pix_copia_cola || '';
+    var vd = req.body.valor_titulo || '';
+    var vc = req.body.data_vencimento || '';
+    var pn = req.body.nome_pagador || '';
+    var pc = req.body.cpf_cnpj_pagador || '';
+    var sn = req.body.seu_numero || nn;
+    var parc = req.body.parcela || '';
+    var tp = req.body.total_parcelas || '';
+
+    console.log('[API/REGEN] Regenerando PDF para NN:', nn, 'VD:', vd);
+
+    if (!nn && !ld) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.send('ERRO|Campos obrigatórios: nosso_numero ou linha_digitavel');
+      return;
+    }
+
+    var dados = {
+      nosso_numero: nn,
+      linha_digitavel: ld,
+      codigo_barras: cb,
+      pix_copia_cola: pix,
+      valor_titulo: vd,
+      data_vencimento: vc,
+      nome_pagador: pn,
+      cpf_cnpj_pagador: pc,
+      seu_numero: sn,
+      parcela: parc ? parseInt(parc) : 0,
+      total_parcelas: tp ? parseInt(tp) : 0,
+    };
+
+    var pdfBuf = await generatePdfFromFields(dados);
+    var b64 = pdfBuf.toString('base64');
+
+    console.log('[API/REGEN] PDF gerado:', (b64.length / 1024).toFixed(0) + 'KB');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.send('OK|' + b64);
+
+  } catch(e) {
+    console.error('[API/REGEN] ERRO:', e.message);
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.send('ERRO|' + e.message);
   }

@@ -455,4 +455,46 @@ async function generatePdfFromData(data) {
   return buildPdfBuffer(d);
 }
 
-module.exports = { storeBoleto, getBoleto, generatePdf, generatePdfFromData };
+module.exports = { storeBoleto, getBoleto, generatePdf, generatePdfFromData, generatePdfFromFields };
+
+/**
+ * Gera PDF a partir de campos flat (dados vindos do Odoo)
+ * Nao chama Itau - usa os dados ja armazenados nos campos da fatura
+ * Formato: { nosso_numero, linha_digitavel, codigo_barras, pix_copia_cola, 
+ *           valor_titulo, data_vencimento, nome_pagador, cpf_cnpj_pagador, ... }
+ */
+async function generatePdfFromFields(data) {
+  var vt = data.valor_titulo || '0';
+  var vtStr = String(vt).replace(/\D/g, '');
+  if (vtStr.length < 15) {
+    vtStr = String(Math.round(parseFloat(vt) * 100)).padStart(15, '0');
+  }
+
+  var d = {
+    txid: data.txid || '',
+    nosso_numero: data.nosso_numero || '',
+    linha_digitavel: data.linha_digitavel || '',
+    codigo_barras: data.codigo_barras || '',
+    data_vencimento: data.data_vencimento || '',
+    data_emissao: data.data_emissao || '',
+    valor_titulo: vtStr,
+    pix_copia_cola: data.pix_copia_cola || '',
+    qrcode_base64: data.qrcode_base64 || '',
+    nome_pagador: data.nome_pagador || '',
+    cpf_cnpj_pagador: data.cpf_cnpj_pagador || '',
+    logradouro: data.logradouro || '',
+    cidade: data.cidade || '',
+    estado: data.estado || '',
+    cep: data.cep || '',
+    seu_numero: data.seu_numero || data.nosso_numero || '',
+    parcela: data.parcela || 0,
+    total_parcelas: data.total_parcelas || 0,
+    agencia: data.agencia || '7764',
+    conta: data.conta || '22338-9',
+    carteira: data.carteira || '109',
+    id_beneficiario: data.id_beneficiario || '776400223389',
+    nome_beneficiario: data.nome_beneficiario || 'AJL COMERCIO ATACADISTA DE FERRAGENS E FERRAMENTAS LTDA',
+    cnpj_beneficiario: data.cnpj_beneficiario || '22.603.750/0001-90',
+  };
+  return buildPdfBuffer(d);
+}
