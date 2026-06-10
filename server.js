@@ -1,7 +1,7 @@
 /**
- * server.js - v6.6
+ * server.js - v6.7
  * Middleware Integracao Itau BoleCode <-> Odoo SaaS
- * v6.6 - Layout FEBRABAN padrao Itau (linhas horizontais, PIX+QR)
+ * v6.7 - PRODUCAO (Efetivacao) - Layout FEBRABAN padrao Itau (linhas horizontais, PIX+QR)
  */
 const express = require('express');
 const cors = require('cors');
@@ -37,7 +37,7 @@ app.use('/api', apiRoutes);
 app.get('/', (req, res) => {
   res.json({
     nome: 'Middleware Itau <-> Odoo',
-    versao: '6.6.0',
+    versao: '6.7.0',
     empresa: config.empresa.nome,
     status: 'online',
     rotas: { health: '/health', healthDiag: '/health/diag', tokenStatus: '/token/status', tokenGerar: 'POST /token/gerar', boletoEmitir: 'POST /boletos/emitir', boletoConsultar: 'GET /boletos/:txid', webhookPix: 'POST /webhook/pix-confirmacao' },
@@ -52,7 +52,7 @@ app.listen(PORT, () => {
   const mtls = config.createMtlsConfig();
   console.log('');
   console.log('===========================================================');
-  console.log('  Middleware Itau-Odoo v6.6 [PRODUCAO]');
+  console.log('  Middleware Itau-Odoo v6.7 [PRODUCAO - EFETIVACAO]');
   console.log('  Ambiente:', config.nodeEnv);
   console.log('  Porta:', PORT);
   console.log('  mTLS:', mtls.hasMtls ? 'SIM (' + config.mtls.cert.length + ' chars)' : 'NAO');

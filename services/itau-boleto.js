@@ -80,7 +80,7 @@ function montaPayloadBolecode(dadosBoleto) {
   }
 
   // Etapa: Simulacao (homologacao) ou Efetivacao (producao)
-  const etapa = dadosBoleto.etapa || 'Simulacao';
+  const etapa = dadosBoleto.etapa || 'Efetivacao';
 
   // Determina tipo pessoa (F ou J) baseado no CPF/CNPJ
   const cpfCnpj = dadosBoleto.cpfCnpjPagador || '';
