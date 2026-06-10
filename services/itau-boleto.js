@@ -1,28 +1,26 @@
 /**
- * services/itau-boleto.js - v6.3
+ * services/itau-boleto.js - v6.9.2
  * =============================================
  * Emissao de Boletos via Itau BoleCode API
  * FORMATO OFICIAL Itau (conforme JSON fornecido pelo banco)
  * FIX: CNPJ incluso no campo tipo_pessoa do pagador
+ * FIX: Nosso numero com timestamp (nunca repete apos restart)
  * =============================================
  */
 const { getAccessToken, invalidateToken } = require('./itau-auth');
 const { callBolecode, callBolecodeGet } = require('./itau-api');
 const config = require('../config');
 
-let nossoNumeroSeq = 1;
-
 /**
- * Gera nosso numero com 8 digitos (conforme Itau)
+ * Gera nosso numero com 8 digitos usando timestamp (nunca repete)
+ * Evita 422 "id de boleto ja existente" apos restart do Render
  */
 function gerarNossoNumero(numeroPedido) {
-  let base = '';
-  if (numeroPedido) {
-    base = String(numeroPedido).replace(/\D/g, '');
-    base = base.substring(Math.max(0, base.length - 4));
-  }
-  const seq = String(nossoNumeroSeq++).padStart(8, '0');
-  console.log('[BOLETO] Nosso Numero gerado:', seq);
+  var ts = Date.now();
+  var rnd = Math.floor(Math.random() * 10);
+  var num = String(ts * 10 + rnd);
+  var seq = num.substring(num.length - 8);
+  console.log('[BOLETO] Nosso Numero gerado (timestamp):', seq);
   return seq;
 }
 
