@@ -41,12 +41,16 @@ router.post('/pagar', authenticateApiKey, async function(req, res) {
     console.log('[API] forma_pagamento:', d.forma_pagamento);
     console.log('[API] fatura:', JSON.stringify(d.fatura || 'MISSING'));
     console.log('[API] fatura_name (flat):', d.fatura_name || 'MISSING');
+    console.log('[API] fatura_id (flat):', d.fatura_id || 'MISSING');
+    console.log('[API] fatura.id (nested):', (d.fatura && d.fatura.id) || 'MISSING');
 
     // Suportar ambos formatos: nested JSON e flat form-urlencoded
     var fat = d.fatura || {};
     var fatNameFromNested = fat.name || fat.seu_numero || '';
     var fatNameFromFlat = d.fatura_name || d.invoice_name || '';
     var faturaName = fatNameFromNested || fatNameFromFlat;
+    // faturaId SEMPRE existe no Odoo (record.id), mesmo para rascunhos
+    var faturaId = (fat.id || d.fatura_id || d.invoice_id) ? parseInt(String(fat.id || d.fatura_id || d.invoice_id)) : 0;
     var valorTotal = parseFloat(fat.valor_nominal || d.fatura_valor) || 0;
     var dataVencBase = fat.data_vencimento || d.fatura_vencimento || '';
 
@@ -55,6 +59,7 @@ router.post('/pagar', authenticateApiKey, async function(req, res) {
 
     console.log('[API] Forma pagamento:', formaPag);
     console.log('[API] Fatura name:', faturaName || 'VAZIO');
+    console.log('[API] Fatura ID:', faturaId || 'NAO ENVIADO');
     console.log('[API] Valor total: R$ ' + valorTotal.toFixed(2));
 
     // Parsear forma de pagamento
@@ -176,16 +181,24 @@ router.post('/pagar', authenticateApiKey, async function(req, res) {
 
     console.log('[API] === ' + totalP + ' BOLETO(S) EMITIDO(S) COM SUCESSO ===');
 
-    // === PUSH AUTOMATICO PARA ODOO (nao bloqueia resposta) ===
+    // === PUSH AUTOMATICO PARA ODOO (await - espera terminar antes de responder) ===
+    // NAO usar async: Render pode dormir e matar o push antes de completar
     var pushData = {
+      faturaId: faturaId,
       faturaName: faturaName,
       boletos: pagamentos,
       pdfsBase64: pdfsBase64
     };
 
-    var pushPromise = pushBoletosToOdoo(pushData).catch(function(err) {
-      console.error('[API] Push Odoo falhou (nao critico):', err.message);
-    });
+    console.log('[API] Iniciando push Odoo (await)... faturaId:', faturaId, 'name:', faturaName || 'vazio');
+    var pushResult = { pushed: false, reason: 'not_called' };
+    try {
+      pushResult = await pushBoletosToOdoo(pushData);
+      console.log('[API] Push resultado:', JSON.stringify(pushResult));
+    } catch (pushErr) {
+      console.error('[API] Push Odoo falhou:', pushErr.message);
+      pushResult = { pushed: false, reason: pushErr.message };
+    }
 
     res.json({
       success: true,
@@ -194,17 +207,9 @@ router.post('/pagar', authenticateApiKey, async function(req, res) {
         total_parcelas: totalP,
         valor_total: valorTotal.toFixed(2),
         fatura_name: faturaName || '(nao informado)',
+        fatura_id: faturaId || 0,
         pagamentos: pagamentos,
-        odoo_push: 'automatico'
-      }
-    });
-
-    // Log resultado do push (async, nao bloqueia)
-    pushPromise.then(function(result) {
-      if (result.pushed) {
-        console.log('[API] Push Odoo OK:', result.attachments, 'attachments, record_id:', result.record_id);
-      } else {
-        console.log('[API] Push Odoo pulado:', result.reason);
+        odoo_push: pushResult.pushed ? 'OK_' + pushResult.attachments + '_attachments' : 'falhou_' + (pushResult.reason || 'unknown')
       }
     });
 
