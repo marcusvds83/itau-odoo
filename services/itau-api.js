@@ -28,4 +28,32 @@ async function callBolecode(accessToken, endpoint, payload) {
   }
 }
 
-module.exports = { callBolecode };
+/**
+ * GET request ao BoleCode (para consultas)
+ */
+async function callBolecodeGet(accessToken, endpoint) {
+  const mtls = config.createMtlsConfig();
+  const baseUrl = config.itau.bolecodeBaseUrl;
+  const httpsAgent = mtls.hasMtls ? new https.Agent({ cert: mtls.cert, key: mtls.key }) : undefined;
+  const url = baseUrl + endpoint;
+  console.log('[ITAU-API] BoleCode GET', endpoint);
+  const headers = {
+    'Authorization': 'Bearer ' + accessToken,
+    'Accept': 'application/json',
+    'x-itau-apikey': config.itau.clientId,
+    'x-itau-correlationID': String(Date.now()),
+  };
+  try {
+    const response = await axios.get(url, { headers, httpsAgent, timeout: 30000 });
+    return response.data;
+  } catch (error) {
+    if (error.response) {
+      const msg = JSON.stringify(error.response.data);
+      console.error('[ITAU-API] ERRO GET ' + error.response.status + ':', msg);
+      throw new Error('BoleCode GET ' + error.response.status + ': ' + msg);
+    }
+    throw new Error('BoleCode conexao: ' + error.message);
+  }
+}
+
+module.exports = { callBolecode, callBolecodeGet };

@@ -1,7 +1,9 @@
 /**
- * server.js - v6.7
+ * server.js - v6.9
  * Middleware Integracao Itau BoleCode <-> Odoo SaaS
- * v6.7 - PRODUCAO (Efetivacao) - Layout FEBRABAN padrao Itau (linhas horizontais, PIX+QR)
+ * v6.9 - PRODUCAO (Efetivacao) - Boleto Parcelado - PDF Permanente
+ * Links de boleto agora funcionam apos restart do Render (consulta Itau sob demanda)
+ * Novos endpoints: GET /boletos/pdf/nn/:nosso_numero, GET /boletos/info/:nosso_numero
  */
 const express = require('express');
 const cors = require('cors');
@@ -28,6 +30,9 @@ const boletoRoutes = require('./routes/boletos');
 const webhookRoutes = require('./routes/webhook');
 const apiRoutes = require('./routes/api');
 
+// Conectar referencia cruzada: api.js precisa do boletoRoutes para txid mapping
+apiRoutes.setBoletoRoutesRef(boletoRoutes);
+
 app.use('/health', healthRoutes);
 app.use('/token', tokenRoutes);
 app.use('/boletos', boletoRoutes);
@@ -37,10 +42,25 @@ app.use('/api', apiRoutes);
 app.get('/', (req, res) => {
   res.json({
     nome: 'Middleware Itau <-> Odoo',
-    versao: '6.7.0',
+    versao: '6.9.0',
     empresa: config.empresa.nome,
     status: 'online',
-    rotas: { health: '/health', healthDiag: '/health/diag', tokenStatus: '/token/status', tokenGerar: 'POST /token/gerar', boletoEmitir: 'POST /boletos/emitir', boletoConsultar: 'GET /boletos/:txid', webhookPix: 'POST /webhook/pix-confirmacao' },
+    novidades: [
+      'PDF permanente: /boletos/pdf/nn/:nosso_numero (funciona apos restart)',
+      'Info boleto: /boletos/info/:nosso_numero (JSON)',
+      'Boleto parcelado: parse automatico de 246+ formas de pagamento'
+    ],
+    rotas: {
+      health: '/health',
+      healthDiag: '/health/diag',
+      tokenStatus: '/token/status',
+      tokenGerar: 'POST /token/gerar',
+      pagar: 'POST /api/pagar',
+      pdfTxid: 'GET /boletos/pdf/:txid',
+      pdfNossoNumero: 'GET /boletos/pdf/nn/:nosso_numero (PERMANENTE)',
+      infoNossoNumero: 'GET /boletos/info/:nosso_numero',
+      webhookPix: 'POST /webhook/pix-confirmacao'
+    }
   });
 });
 
@@ -52,7 +72,8 @@ app.listen(PORT, () => {
   const mtls = config.createMtlsConfig();
   console.log('');
   console.log('===========================================================');
-  console.log('  Middleware Itau-Odoo v6.7 [PRODUCAO - EFETIVACAO]');
+  console.log('  Middleware Itau-Odoo v6.9 [PRODUCAO - EFETIVACAO]');
+  console.log('  Boleto Parcelado + PDF Permanente + Consulta Itau sob demanda');
   console.log('  Ambiente:', config.nodeEnv);
   console.log('  Porta:', PORT);
   console.log('  mTLS:', mtls.hasMtls ? 'SIM (' + config.mtls.cert.length + ' chars)' : 'NAO');

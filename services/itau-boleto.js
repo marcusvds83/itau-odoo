@@ -7,7 +7,7 @@
  * =============================================
  */
 const { getAccessToken, invalidateToken } = require('./itau-auth');
-const { callBolecode } = require('./itau-api');
+const { callBolecode, callBolecodeGet } = require('./itau-api');
 const config = require('../config');
 
 let nossoNumeroSeq = 1;
@@ -199,4 +199,113 @@ async function consultarBoleto(txid) {
   }
 }
 
-module.exports = { emitirBoleto, consultarBoleto, montaPayloadBolecode };
+/**
+ * Parse forma_pagamento string into installment plan
+ * Retorna: { tipo: 'boleto'|'cartao'|'entrega'|'desconhecido', parcelas: [{ numero, dias, valor_pct }] }
+ * Exemplos:
+ *   "BOLETO 14/28/42"       -> 3 boletos (14, 28, 42 dias)
+ *   "1 + 30 BOLETO"         -> 1 boleto (30 dias)
+ *   "1 + boleto 30/60"      -> 2 boletos (30, 60 dias)
+ *   "1+ 03 BOLETOS"         -> 3 boletos (30, 60, 90 dias)
+ *   "BOLETO 10X"            -> 10 boletos (30d intervalo)
+ *   "BOL 15/30/45/60/75/90"  -> 6 boletos (15,30,45,60,75,90 dias)
+ *   "1+28/42/56/70"          -> 4 boletos (28,42,56,70 dias)
+ *   "BOLETO 07DD"           -> 1 boleto (7 dias)
+ */
+function parseFormaPagamento(forma) {
+  if (!forma) return { tipo: 'desconhecido', parcelas: [] };
+  var upper = String(forma).toUpperCase().trim();
+
+  // Detectar tipo de pagamento
+  var isBoleto = upper.indexOf('BOLETO') >= 0 || upper.indexOf('BOL ') >= 0;
+  var isCartao = upper.indexOf('AMEX') >= 0 || upper.indexOf('MASTER') >= 0 ||
+                 upper.indexOf('CART') >= 0 || upper.indexOf('CREDIT') >= 0;
+  var isEntrega = upper.indexOf('ENTREGA') >= 0 && !isBoleto;
+  var hasSlash = upper.indexOf('/') >= 0;
+
+  // Formas nao-boleto
+  if (isEntrega && !hasSlash) return { tipo: 'entrega', parcelas: [] };
+  if (isCartao && !isBoleto) return { tipo: 'cartao', parcelas: [] };
+
+  // Pagamento misto (BOLETO + DIN + C.CRED etc) -> emitir 1 boleto
+  if (isBoleto && (upper.indexOf('DIN') >= 0 || upper.indexOf('C.CRED') >= 0 || upper.indexOf('C.CARD') >= 0)) {
+    return { tipo: 'boleto', parcelas: [{ numero: 1, dias: 30, valor_pct: 100 }] };
+  }
+
+  // Formas com "N+" prefixo (entrada + parcelas)
+  var clean = upper.replace(/^\d+\s*\+\s*/, '');
+
+  // Parser de dias via "/" (ex: "14/28/42", "30/60", "15/30/45")
+  if (hasSlash) {
+    var parts = clean.split('/');
+    var days = [];
+    for (var i = 0; i < parts.length; i++) {
+      var nums = parts[i].match(/\d+/g);
+      if (nums) days.push(parseInt(nums[nums.length - 1]));
+    }
+    if (days.length >= 1) {
+      return {
+        tipo: 'boleto',
+        parcelas: days.map(function(d, i) {
+          return { numero: i + 1, dias: d, valor_pct: 100 / days.length };
+        })
+      };
+    }
+  }
+
+  // Limpar texto restante
+  clean = clean.replace(/BOLETO/g, '').replace(/BOL/g, '').replace(/DD/g, '').replace(/\bD\b/g, '').trim();
+
+  // Padrao contador: "N BOLETOS", "NX", "N VEZES"
+  var countMatch = clean.match(/(\d+)\s*(?:BOLETOS|X\b|VEZES)/);
+  if (countMatch) {
+    var n = parseInt(countMatch[1]);
+    if (n > 0) {
+      var parcelas = [];
+      for (var i = 0; i < n; i++) {
+        parcelas.push({ numero: i + 1, dias: (i + 1) * 30, valor_pct: 100 / n });
+      }
+      return { tipo: 'boleto', parcelas: parcelas };
+    }
+  }
+
+  // Dia unico (ex: "30 BOLETO", "07DD", "21D")
+  var singleMatch = clean.match(/(\d+)/);
+  if (singleMatch) {
+    var d = parseInt(singleMatch[1]);
+    if (d > 0 && d <= 365) {
+      return { tipo: 'boleto', parcelas: [{ numero: 1, dias: d, valor_pct: 100 }] };
+    }
+  }
+
+  // Padrao boleto padrao: 1 boleto 30 dias
+  if (isBoleto) return { tipo: 'boleto', parcelas: [{ numero: 1, dias: 30, valor_pct: 100 }] };
+
+  return { tipo: 'desconhecido', parcelas: [] };
+}
+
+/**
+ * Consulta boleto por nosso_numero no BoleCode Itau
+ * Quando o middleware reinicia (Render sleep), a memoria e zerada.
+ * Esta funcao consulta o Itaú diretamente para recuperar os dados do boleto.
+ */
+async function consultarBoletoPorNossoNumero(nossoNumero, beneficiaryId) {
+  console.log('[BOLETO] Consultando boleto por nosso_numero:', nossoNumero);
+  let accessToken;
+  try {
+    accessToken = await getAccessToken();
+  } catch (err) {
+    throw new Error('Falha na autenticacao Itau: ' + err.message);
+  }
+  try {
+    var endpoint = '/boletos_pix?beneficiario=' + (beneficiaryId || config.banco.idBeneficiario || '776400223389') + '&nosso_numero=' + nossoNumero;
+    var response = await callBolecodeGet(accessToken, endpoint);
+    console.log('[BOLETO] Boleto encontrado por nosso_numero:', JSON.stringify(response).substring(0, 500));
+    return { sucesso: true, dados: response };
+  } catch (error) {
+    console.error('[BOLETO] Erro ao consultar por nosso_numero:', error.message);
+    throw error;
+  }
+}
+
+module.exports = { emitirBoleto, consultarBoleto, consultarBoletoPorNossoNumero, montaPayloadBolecode, parseFormaPagamento };

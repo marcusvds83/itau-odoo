@@ -134,6 +134,13 @@ function drawHeader(doc, x, y, pw, dados) {
   // Linha vertical separando logo do restante
   vLine(doc, x + 110, y, y + 34);
 
+  // Indicador PARCELA X/N (se boleto parcelado)
+  if (dados.parcela && dados.total_parcelas && dados.total_parcelas > 1) {
+    doc.fillColor('#CC0000').fontSize(10).font('Helvetica-Bold');
+    doc.text('PARCELA ' + dados.parcela + '/' + dados.total_parcelas, x + 116, y + 17, { width: 120, lineBreak: false });
+    doc.font('Helvetica');
+  }
+
   // Campo Codigo do Banco
   drawLabel(doc, x + 116, y, 80, 'Codigo do Banco');
   drawValue(doc, x + 116, y + 7, 80, '341-7', { bold: true, size: F_BOLD_VAL });
