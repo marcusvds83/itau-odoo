@@ -25,6 +25,13 @@ const config = {
     cert: process.env.ITAU_CERT_CRT || '',
     key: process.env.ITAU_CERT_KEY || '',
   },
+  odoo: {
+    enabled: process.env.ODOO_PUSH_ENABLED === 'true',
+    url: process.env.ODOO_URL || '',
+    db: process.env.ODOO_DB || '',
+    user: process.env.ODOO_USER || '',
+    password: process.env.ODOO_PASSWORD || '',
+  },
   createMtlsConfig() {
     const hasCert = !!(this.mtls.cert && this.mtls.key);
     if (!hasCert) return { cert: null, key: null, hasMtls: false };

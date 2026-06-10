@@ -1,19 +1,19 @@
 /**
- * routes/api.js - v6.9
+ * routes/api.js - v6.9.2
  * =============================================
- * API de Pagamento - Suporte a boleto parcelado
+ * API de Pagamento - Suporte a boleto parcelado + Push PDF Odoo
  * - Parse forma_pagamento para detectar parcelas
  * - Emite N boletos (um por parcela)
- * - Retorna array com todos os boletos
+ * - Push automatico de PDFs para Odoo via XML-RPC (ir.attachment + chatter)
  * - URL permanente: /boletos/pdf/nn/:nosso_numero (funciona apos restart)
- * - salva mapping txid->nosso_numero para fallback
  * =============================================
  */
 const express = require('express');
 const router = express.Router();
 const { authenticateApiKey } = require('../middleware/auth');
 const { emitirBoleto, parseFormaPagamento } = require('../services/itau-boleto');
-const { storeBoleto, generatePdf } = require('../services/pdf-boleto');
+const { storeBoleto } = require('../services/pdf-boleto');
+const { pushBoletosToOdoo } = require('../services/odoo-push');
 
 /** Reference to boleto routes for txid mapping */
 var boletoRoutesRef = null;
@@ -158,13 +158,29 @@ router.post('/pagar', authenticateApiKey, async function(req, res) {
 
     console.log('[API] === ' + totalP + ' BOLETO(S) EMITIDO(S) COM SUCESSO ===');
 
+    // Push automatico de PDFs para Odoo via XML-RPC (nao bloqueia a resposta)
+    var faturaName = fat.name || fat.seu_numero || '';
+    var pushPromise = pushBoletosToOdoo(faturaName, pagamentos).catch(function(err) {
+      console.error('[API] Push Odoo falhou (nao critico):', err.message);
+    });
+
     res.json({
       success: true,
       data: {
         forma_pagamento: formaPag,
         total_parcelas: totalP,
         valor_total: valorTotal.toFixed(2),
-        pagamentos: pagamentos
+        pagamentos: pagamentos,
+        odoo_push: 'automatico'
+      }
+    });
+
+    // Log resultado do push (async, nao bloqueia)
+    pushPromise.then(function(result) {
+      if (result.pushed) {
+        console.log('[API] Push Odoo OK:', result.attachments, 'attachments, record_id:', result.record_id);
+      } else {
+        console.log('[API] Push Odoo pulado:', result.reason);
       }
     });
 
