@@ -1,9 +1,10 @@
 /**
- * server.js - v6.9
+ * server.js - v6.9.4
  * Middleware Integracao Itau BoleCode <-> Odoo SaaS
- * v6.9 - PRODUCAO (Efetivacao) - Boleto Parcelado - PDF Permanente
- * Links de boleto agora funcionam apos restart do Render (consulta Itau sob demanda)
- * Novos endpoints: GET /boletos/pdf/nn/:nosso_numero, GET /boletos/info/:nosso_numero
+ * v6.9.4 - PRODUCAO (Efetivacao) - Boleto Parcelado - PDF Push Odoo
+ * - PDFs gerados na emissao e pushados automaticamente para Odoo
+ * - Rota /boletos/pdf/nn/:nn funciona na mesma sessao (mapa reverso)
+ * - Apos restart: PDFs disponiveis como anexos no Odoo (push automatico)
  */
 const express = require('express');
 const cors = require('cors');
@@ -30,9 +31,6 @@ const boletoRoutes = require('./routes/boletos');
 const webhookRoutes = require('./routes/webhook');
 const apiRoutes = require('./routes/api');
 
-// Conectar referencia cruzada: api.js precisa do boletoRoutes para txid mapping
-apiRoutes.setBoletoRoutesRef(boletoRoutes);
-
 app.use('/health', healthRoutes);
 app.use('/token', tokenRoutes);
 app.use('/boletos', boletoRoutes);
@@ -42,23 +40,22 @@ app.use('/api', apiRoutes);
 app.get('/', (req, res) => {
   res.json({
     nome: 'Middleware Itau <-> Odoo',
-    versao: '6.9.0',
+    versao: '6.9.4',
     empresa: config.empresa.nome,
     status: 'online',
+    odoo_push: config.odoo && config.odoo.enabled ? 'ATIVO' : 'DESATIVADO',
     novidades: [
-      'PDF permanente: /boletos/pdf/nn/:nosso_numero (funciona apos restart)',
-      'Info boleto: /boletos/info/:nosso_numero (JSON)',
-      'Boleto parcelado: parse automatico de 246+ formas de pagamento'
+      'PDFs pushados automaticamente para Odoo (attachments + chatter)',
+      'PDF gerado na emissao (nao depende de RAM apos restart)',
+      'Nosso numero com timestamp (nunca repete)',
+      'Boleto parcelado: parse automatico de formas de pagamento'
     ],
     rotas: {
       health: '/health',
-      healthDiag: '/health/diag',
-      tokenStatus: '/token/status',
-      tokenGerar: 'POST /token/gerar',
       pagar: 'POST /api/pagar',
       pdfTxid: 'GET /boletos/pdf/:txid',
-      pdfNossoNumero: 'GET /boletos/pdf/nn/:nosso_numero (PERMANENTE)',
-      infoNossoNumero: 'GET /boletos/info/:nosso_numero',
+      pdfNossoNumero: 'GET /boletos/pdf/nn/:nosso_numero (mesma sessao)',
+      regenPdf: 'POST /api/regen',
       webhookPix: 'POST /webhook/pix-confirmacao'
     }
   });
@@ -72,8 +69,8 @@ app.listen(PORT, () => {
   const mtls = config.createMtlsConfig();
   console.log('');
   console.log('===========================================================');
-  console.log('  Middleware Itau-Odoo v6.9 [PRODUCAO - EFETIVACAO]');
-  console.log('  Boleto Parcelado + PDF Permanente + Consulta Itau sob demanda');
+  console.log('  Middleware Itau-Odoo v6.9.4 [PRODUCAO - EFETIVACAO]');
+  console.log('  Boleto Parcelado + Push PDF Odoo + Timestamp NN');
   console.log('  Ambiente:', config.nodeEnv);
   console.log('  Porta:', PORT);
   console.log('  mTLS:', mtls.hasMtls ? 'SIM (' + config.mtls.cert.length + ' chars)' : 'NAO');
@@ -86,6 +83,10 @@ app.listen(PORT, () => {
   console.log('  Conta:', config.banco.conta);
   console.log('  ID Beneficiario:', config.banco.idBeneficiario);
   console.log('  Carteira:', config.banco.codigoCarteira);
+  console.log('  Odoo Push:', config.odoo && config.odoo.enabled ? 'ATIVO' : 'DESATIVADO');
+  if (config.odoo && config.odoo.enabled) {
+    console.log('  Odoo URL:', config.odoo.url);
+  }
   console.log('===========================================================');
   console.log('');
 });

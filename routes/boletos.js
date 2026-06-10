@@ -1,20 +1,21 @@
 /**
- * routes/boletos.js - v6.9.3
+ * routes/boletos.js - v6.9.4
  * =============================================
- * PDF de Boleto - Regeneracao e Download
+ * PDF de Boleto - Download e Regeneracao
  * - POST /boletos/pdf       -> PDF a partir de dados (JSON)
  * - POST /boletos/regen     -> Regenera PDF a partir de campos flat (sem chamar Itau)
  * - GET  /boletos/pdf/:txid -> PDF pelo txid (memoria apenas)
- * - GET  /boletos/info/:nn  -> Dados do boleto (JSON) - NAO DISPONIVEL (Itau 405)
+ * - GET  /boletos/pdf/nn/:nosso_numero -> PDF pelo nosso_numero (memoria, mapa reverso)
+ * - GET  /boletos/info/:nn  -> Info do boleto (bloqueado - Itau 405)
  *
  * IMPORTANTE: Itau API retorna 405 para GET search por nosso_numero.
- * Nao e possivel recuperar boletos do Itau por nosso_numero.
- * Use POST /boletos/regen com os dados dos campos Odoo para regenerar PDFs.
+ * As rotas GET usam apenas dados em memoria (perdem apos restart).
+ * Os PDFs sao anexados ao Odoo automaticamente pelo push (odoo-push.js).
  * =============================================
  */
 const express = require('express');
 const router = express.Router();
-const { storeBoleto, getBoleto, generatePdf, generatePdfFromData, generatePdfFromFields } = require('../services/pdf-boleto');
+const { storeBoleto, getBoleto, getTxidByNn, generatePdf, generatePdfFromData, generatePdfFromFields } = require('../services/pdf-boleto');
 
 /**
  * POST /boletos/pdf
@@ -53,6 +54,46 @@ router.post('/regen', async function(req, res) {
 });
 
 /**
+ * GET /boletos/pdf/nn/:nosso_numero
+ * PDF pelo nosso_numero (usa mapa reverso em memoria)
+ * Funciona na mesma sessao (antes do restart do Render)
+ * Apos restart, use os PDFs anexados no Odoo (push automatico)
+ */
+router.get('/pdf/nn/:nosso_numero', async function(req, res) {
+  try {
+    var nn = req.params.nosso_numero;
+    console.log('[BOLETOS] PDF GET nosso_numero:', nn);
+
+    // Buscar txid pelo mapa reverso
+    var txid = getTxidByNn(nn);
+    if (!txid) {
+      return res.status(404).json({
+        erro: 'Boleto nao encontrado na memoria (middleware pode ter reiniciado).',
+        solucao: 'Os PDFs ja foram anexados automaticamente na fatura Odoo. Verifique os anexos da fatura.',
+        nosso_numero: nn
+      });
+    }
+
+    console.log('[BOLETOS] Nosso numero', nn, '-> txid:', txid);
+    var dados = getBoleto(txid);
+    if (!dados) {
+      return res.status(404).json({
+        erro: 'Dados do boleto nao encontrados na memoria.',
+        solucao: 'Os PDFs ja foram anexados automaticamente na fatura Odoo. Verifique os anexos da fatura.'
+      });
+    }
+
+    var b = await generatePdf(txid);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename=boleto-' + nn + '.pdf');
+    res.send(b);
+  } catch(e) {
+    console.error('[BOLETOS] Erro PDF GET nn:', e.message, e.stack);
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+/**
  * GET /boletos/pdf/:txid
  * Gera PDF pelo txid (somente da memoria)
  * NOTA: Nao consulta Itau pois a API retorna 405 para buscas.
@@ -66,7 +107,7 @@ router.get('/pdf/:txid', async function(req, res) {
     if (!dados) {
       return res.status(404).json({
         erro: 'Boleto nao encontrado na memoria. O middleware pode ter reiniciado.',
-        solucao: 'Use POST /boletos/regen com os dados dos campos Odoo para regenerar o PDF.'
+        solucao: 'Os PDFs ja foram anexados automaticamente na fatura Odoo. Verifique os anexos da fatura.'
       });
     }
     var b = await generatePdf(txid);

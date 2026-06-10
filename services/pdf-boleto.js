@@ -13,13 +13,22 @@ var bwipjs = null;
 try { bwipjs = require('bwip-js'); } catch (e) { console.log('[PDF] bwip-js N/D'); }
 
 var store = new Map();
+var nnMap = new Map(); // nosso_numero -> txid (reverso)
 
 function storeBoleto(txid, dados) {
   store.set(txid, Object.assign({}, dados, { ts: Date.now() }));
+  // Criar mapa reverso: nosso_numero -> txid
+  if (dados.nosso_numero) {
+    nnMap.set(dados.nosso_numero, txid);
+  }
 }
 
 function getBoleto(txid) {
   return store.get(txid) || null;
+}
+
+function getTxidByNn(nossoNumero) {
+  return nnMap.get(nossoNumero) || null;
 }
 
 function formatCnpj(v) {
@@ -455,7 +464,7 @@ async function generatePdfFromData(data) {
   return buildPdfBuffer(d);
 }
 
-module.exports = { storeBoleto, getBoleto, generatePdf, generatePdfFromData, generatePdfFromFields };
+module.exports = { storeBoleto, getBoleto, getTxidByNn, generatePdf, generatePdfFromData, generatePdfFromFields };
 
 /**
  * Gera PDF a partir de campos flat (dados vindos do Odoo)

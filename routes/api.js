@@ -1,24 +1,20 @@
 /**
- * routes/api.js - v6.9.2
+ * routes/api.js - v6.9.4
  * =============================================
  * API de Pagamento - Suporte a boleto parcelado + Push PDF Odoo
  * - Parse forma_pagamento para detectar parcelas
  * - Emite N boletos (um por parcela)
+ * - Gera PDFs imediatamente apos emissao (antes de perder RAM)
  * - Push automatico de PDFs para Odoo via XML-RPC (ir.attachment + chatter)
- * - URL permanente: /boletos/pdf/nn/:nosso_numero (funciona apos restart)
+ * - Suporta JSON nested (fatura.name) e flat (fatura_name)
  * =============================================
  */
 const express = require('express');
 const router = express.Router();
 const { authenticateApiKey } = require('../middleware/auth');
 const { emitirBoleto, parseFormaPagamento } = require('../services/itau-boleto');
-const { storeBoleto, generatePdfFromFields } = require('../services/pdf-boleto');
+const { storeBoleto, generatePdf, generatePdfFromFields } = require('../services/pdf-boleto');
 const { pushBoletosToOdoo } = require('../services/odoo-push');
-
-/** Reference to boleto routes for txid mapping */
-var boletoRoutesRef = null;
-function setBoletoRoutesRef(ref) { boletoRoutesRef = ref; }
-router.setBoletoRoutesRef = setBoletoRoutesRef;
 
 /**
  * Calcula data de vencimento: base_date + dias
@@ -38,14 +34,28 @@ function calcDataVenc(base, dias) {
 router.post('/pagar', authenticateApiKey, async function(req, res) {
   try {
     var d = req.body;
+
+    // Debug: logar campos relevantes do body
+    console.log('[API] === NOVA REQUISICAO DE PAGAMENTO ===');
+    console.log('[API] Body keys:', Object.keys(d).join(', '));
+    console.log('[API] forma_pagamento:', d.forma_pagamento);
+    console.log('[API] fatura:', JSON.stringify(d.fatura || 'MISSING'));
+    console.log('[API] fatura_name (flat):', d.fatura_name || 'MISSING');
+
+    // Suportar ambos formatos: nested JSON e flat form-urlencoded
     var fat = d.fatura || {};
+    var fatNameFromNested = fat.name || fat.seu_numero || '';
+    var fatNameFromFlat = d.fatura_name || d.invoice_name || '';
+    var faturaName = fatNameFromNested || fatNameFromFlat;
+    var valorTotal = parseFloat(fat.valor_nominal || d.fatura_valor) || 0;
+    var dataVencBase = fat.data_vencimento || d.fatura_vencimento || '';
+
     var pag = d.pagador || {};
     var formaPag = d.forma_pagamento || '';
-    var valorTotal = parseFloat(fat.valor_nominal) || 0;
 
-    console.log('[API] === NOVA REQUISICAO DE PAGAMENTO ===');
     console.log('[API] Forma pagamento:', formaPag);
-    console.log('[API] Valor total: R$', valorTotal.toFixed(2));
+    console.log('[API] Fatura name:', faturaName || 'VAZIO');
+    console.log('[API] Valor total: R$ ' + valorTotal.toFixed(2));
 
     // Parsear forma de pagamento
     var plano = parseFormaPagamento(formaPag);
@@ -59,16 +69,16 @@ router.post('/pagar', authenticateApiKey, async function(req, res) {
       });
     }
 
-    // Payload base (dados do pagador)
+    // Payload base (dados do pagador) - suportar nested e flat
     var basePayload = {
-      cpfCnpjPagador: pag.cpf_cnpj || '',
-      nomePagador: pag.nome || '',
-      numeroPedido: fat.seu_numero || fat.name || '',
-      dataVencimento: fat.data_vencimento || '',
-      logradouro: pag.street || '',
-      cidade: pag.city || '',
-      estado: pag.state || '',
-      cep: pag.zip || ''
+      cpfCnpjPagador: pag.cpf_cnpj || d.pagador_cpf || '',
+      nomePagador: pag.nome || d.pagador_nome || '',
+      numeroPedido: fat.seu_numero || fat.name || d.fatura_name || '',
+      dataVencimento: dataVencBase,
+      logradouro: pag.street || d.pagador_street || '',
+      cidade: pag.city || d.pagador_city || '',
+      estado: pag.state || d.pagador_state || '',
+      cep: pag.zip || d.pagador_zip || ''
     };
 
     var totalP = plano.parcelas.length;
@@ -90,7 +100,7 @@ router.post('/pagar', authenticateApiKey, async function(req, res) {
       }
 
       // Calcular data de vencimento: base + dias offset
-      var dataVenc = calcDataVenc(fat.data_vencimento, parc.dias);
+      var dataVenc = calcDataVenc(dataVencBase, parc.dias);
 
       // Montar payload desta parcela
       var pPayload = Object.assign({}, basePayload);
@@ -130,11 +140,6 @@ router.post('/pagar', authenticateApiKey, async function(req, res) {
         total_parcelas: totalP
       });
 
-      // Salvar mapping txid -> nosso_numero (para fallback no /pdf/:txid)
-      if (nossoNumero && boletoRoutesRef && boletoRoutesRef.setTxidMapping) {
-        boletoRoutesRef.setTxidMapping(txid, nossoNumero);
-      }
-
       var vc = parseInt(String(ind.valor_titulo || '0'), 10);
 
       pagamentos.push({
@@ -149,18 +154,36 @@ router.post('/pagar', authenticateApiKey, async function(req, res) {
         valor_titulo: (vc / 100).toFixed(2),
         data_vencimento: ind.data_vencimento || dataVenc,
         pdf_url_txid: 'https://itau-odoo.onrender.com/boletos/pdf/' + txid,
-        pdf_url: 'https://itau-odoo.onrender.com/boletos/pdf/nn/' + nossoNumero,
-        info_url: 'https://itau-odoo.onrender.com/boletos/info/' + nossoNumero
+        pdf_url_nn: 'https://itau-odoo.onrender.com/boletos/pdf/nn/' + nossoNumero
       });
 
       console.log('[API]   Parcela ' + parc.numero + ' OK: txid=' + txid + ' NN=' + nossoNumero);
     }
 
+    // === GERAR PDFs IMEDIATAMENTE (antes de qualquer restart) ===
+    console.log('[API] Gerando', totalP, 'PDF(s) para push...');
+    var pdfsBase64 = [];
+    for (var i = 0; i < pagamentos.length; i++) {
+      try {
+        var pdfBuf = await generatePdf(pagamentos[i].txid);
+        pdfsBase64.push(pdfBuf.toString('base64'));
+        console.log('[API]   PDF', i + 1, '/', totalP, '- OK (' + (pdfBuf.length / 1024).toFixed(0) + 'KB)');
+      } catch (pdfErr) {
+        console.error('[API]   PDF', i + 1, 'ERRO:', pdfErr.message);
+        pdfsBase64.push(null); // null = falhou, pular no push
+      }
+    }
+
     console.log('[API] === ' + totalP + ' BOLETO(S) EMITIDO(S) COM SUCESSO ===');
 
-    // Push automatico de PDFs para Odoo via XML-RPC (nao bloqueia a resposta)
-    var faturaName = fat.name || fat.seu_numero || '';
-    var pushPromise = pushBoletosToOdoo(faturaName, pagamentos).catch(function(err) {
+    // === PUSH AUTOMATICO PARA ODOO (nao bloqueia resposta) ===
+    var pushData = {
+      faturaName: faturaName,
+      boletos: pagamentos,
+      pdfsBase64: pdfsBase64
+    };
+
+    var pushPromise = pushBoletosToOdoo(pushData).catch(function(err) {
       console.error('[API] Push Odoo falhou (nao critico):', err.message);
     });
 
@@ -170,6 +193,7 @@ router.post('/pagar', authenticateApiKey, async function(req, res) {
         forma_pagamento: formaPag,
         total_parcelas: totalP,
         valor_total: valorTotal.toFixed(2),
+        fatura_name: faturaName || '(nao informado)',
         pagamentos: pagamentos,
         odoo_push: 'automatico'
       }
@@ -185,7 +209,7 @@ router.post('/pagar', authenticateApiKey, async function(req, res) {
     });
 
   } catch (e) {
-    console.error('[API] ERRO:', e.message);
+    console.error('[API] ERRO:', e.message, e.stack);
     res.json({ success: false, message: e.message });
   }
 });
@@ -221,7 +245,7 @@ router.post('/gerar', async function(req, res) {
 
     console.log('[API/GERAR] === NOVA REQUISICAO (Odoo Server Action) ===');
     console.log('[API/GERAR] Forma pagamento:', formaPag);
-    console.log('[API/GERAR] Fatura:', fatName, '| Valor: R$', fatValor.toFixed(2));
+    console.log('[API/GERAR] Fatura:', fatName, '| Valor: R$ ' + fatValor.toFixed(2));
 
     var plano = parseFormaPagamento(formaPag);
     if (plano.tipo !== 'boleto' || plano.parcelas.length === 0) {
@@ -294,11 +318,6 @@ router.post('/gerar', async function(req, res) {
         total_parcelas: totalP
       });
 
-      // Save txid mapping
-      if (nossoNumero && boletoRoutesRef && boletoRoutesRef.setTxidMapping) {
-        boletoRoutesRef.setTxidMapping(txid, nossoNumero);
-      }
-
       // Generate PDF buffer and convert to base64
       var pdfBuf = await generatePdf(txid);
       var pdfB64 = pdfBuf.toString('base64');
@@ -323,7 +342,7 @@ router.post('/gerar', async function(req, res) {
     res.send(lines.join('\n'));
 
   } catch (e) {
-    console.error('[API/GERAR] ERRO:', e.message);
+    console.error('[API/GERAR] ERRO:', e.message, e.stack);
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.send('ERRO|' + e.message);
   }
@@ -331,12 +350,9 @@ router.post('/gerar', async function(req, res) {
 
 /**
  * POST /api/regen
- * =============================================
  * Regenera PDF de boleto a partir dos campos Odoo (sem chamar Itau)
  * Aceita form-urlencoded (url_open do Odoo)
  * Retorna texto plano: OK|<base64_pdf> ou ERRO|<mensagem>
- * Uso: Acao Odoo "Baixar PDF" - para boletos ja gerados
- * =============================================
  */
 router.post('/regen', async function(req, res) {
   try {
@@ -356,7 +372,7 @@ router.post('/regen', async function(req, res) {
 
     if (!nn && !ld) {
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.send('ERRO|Campos obrigatórios: nosso_numero ou linha_digitavel');
+      res.send('ERRO|Campos obrigatorios: nosso_numero ou linha_digitavel');
       return;
     }
 
@@ -382,7 +398,7 @@ router.post('/regen', async function(req, res) {
     res.send('OK|' + b64);
 
   } catch(e) {
-    console.error('[API/REGEN] ERRO:', e.message);
+    console.error('[API/REGEN] ERRO:', e.message, e.stack);
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.send('ERRO|' + e.message);
   }

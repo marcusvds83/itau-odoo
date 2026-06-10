@@ -1,11 +1,14 @@
 /**
- * services/odoo-push.js - v6.9
+ * services/odoo-push.js - v6.9.4
  * =============================================
  * Push de PDFs de boletos para Odoo via XML-RPC
  * - Conecta ao Odoo SaaS via xmlrpc/2/common e xmlrpc/2/object
  * - Busca fatura pelo name (record.name)
- * - Cria ir.attachment com PDF base64
+ * - Cria ir.attachment com PDF base64 (pre-gerado na emissao)
  * - Posta mensagem no chatter via mail.message
+ *
+ * MUDANCA v6.9.4: Aceita PDFs pre-gerados (nao depende mais de generatePdf(txid))
+ * Os PDFs sao gerados em api.js logo apos a emissao, garantindo disponibilidade.
  *
  * ENV VARS (Render):
  *   ODOO_URL          = https://ajlferroeaco.odoo.com
@@ -73,9 +76,10 @@ function executeKw(client, db, uid, password, model, method, args, kwargs) {
  */
 async function findInvoiceId(client, db, uid, pwd, faturaName) {
   if (!faturaName) {
-    console.error('[ODOO-PUSH] Sem nome de fatura para buscar');
+    console.warn('[ODOO-PUSH] Sem nome de fatura para buscar');
     return null;
   }
+  console.log('[ODOO-PUSH] Buscando fatura:', faturaName);
   var ids = await executeKw(client, db, uid, pwd, 'account.move', 'search', [[['name', '=', faturaName]]]);
   if (!ids || ids.length === 0) {
     console.warn('[ODOO-PUSH] Fatura nao encontrada:', faturaName);
@@ -116,8 +120,13 @@ async function postChatterMessage(client, db, uid, pwd, recordId, bodyHtml) {
 
 /**
  * Push completo: busca fatura, cria attachments, posta chatter
+ * 
+ * @param {Object} pushData - { faturaName, boletos[], pdfsBase64[] }
+ *   - faturaName: nome da fatura Odoo (ex: "INV/2026/0001")
+ *   - boletos: array de pagamentos com dados do boleto
+ *   - pdfsBase64: array de PDFs em base64 (pre-gerados, mesma ordem de boletos)
  */
-async function pushBoletosToOdoo(faturaName, boletos) {
+async function pushBoletosToOdoo(pushData) {
   var config = require('../config');
   var odooConfig = config.odoo;
 
@@ -132,42 +141,66 @@ async function pushBoletosToOdoo(faturaName, boletos) {
     return { pushed: false, reason: 'missing_credentials' };
   }
 
+  var faturaName = pushData.faturaName || '';
+  var boletos = pushData.boletos || [];
+  var pdfsBase64 = pushData.pdfsBase64 || [];
+
+  console.log('[ODOO-PUSH] Iniciando push:', boletos.length, 'boleto(s), fatura:', faturaName || 'NAO INFORMADA');
+
   try {
     var client = createClient(odooConfig.url);
     var uid = await authenticate(client, odooConfig.db, odooConfig.user, odooConfig.password);
 
     // Buscar fatura pelo nome
-    var recordId = await findInvoiceId(client, odooConfig.db, uid, odooConfig.password, faturaName);
-    if (!recordId) {
-      return { pushed: false, reason: 'invoice_not_found' };
+    if (!faturaName) {
+      console.warn('[ODOO-PUSH] Nome da fatura vazio. Tentando buscar faturas recentes...');
+      // Buscar as 3 faturas mais recentes
+      var recentIds = await executeKw(client, odooConfig.db, uid, odooConfig.password, 'account.move', 'search', [[['move_type', '=', 'out_invoice']]], { order: 'id desc', limit: 3 });
+      if (!recentIds || recentIds.length === 0) {
+        console.warn('[ODOO-PUSH] Nenhuma fatura de venda encontrada');
+        return { pushed: false, reason: 'no_invoices' };
+      }
+      // Usar a mais recente
+      var recordId = recentIds[0];
+      console.log('[ODOO-PUSH] Usando fatura mais recente, ID:', recordId);
+    } else {
+      var recordId = await findInvoiceId(client, odooConfig.db, uid, odooConfig.password, faturaName);
+      if (!recordId) {
+        return { pushed: false, reason: 'invoice_not_found' };
+      }
     }
 
-    // Gerar PDFs e criar attachments
-    var pdfService = require('./pdf-boleto');
+    // Criar attachments com PDFs pre-gerados
     var attachments = 0;
+    var faturaNameSafe = faturaName ? faturaName.replace(/[^a-zA-Z0-9\-_]/g, '_') : 'Fatura';
 
     for (var i = 0; i < boletos.length; i++) {
       var bol = boletos[i];
-      var txid = bol.txid;
-      var nn = bol.nosso_numero || txid;
+      var pdfB64 = pdfsBase64[i]; // Pre-gerado em api.js
+
+      if (!pdfB64) {
+        console.warn('[ODOO-PUSH] PDF', i + 1, 'nao disponivel (geracao falhou), pulando...');
+        continue;
+      }
+
+      var nn = bol.nosso_numero || '';
       var total = bol.total_parcelas || 1;
       var parc = bol.parcela || 1;
-
-      // Gerar PDF buffer
-      var pdfBuf = await pdfService.generatePdf(txid);
-      var pdfB64 = pdfBuf.toString('base64');
 
       // Nome do arquivo
       var filename;
       if (total > 1) {
-        filename = 'Boleto_' + faturaName.replace('/', '-') + '_P' + parc + 'de' + total + '_' + nn + '.pdf';
+        filename = 'Boleto_' + faturaNameSafe + '_P' + parc + 'de' + total + '_' + nn + '.pdf';
       } else {
-        filename = 'Boleto_' + faturaName.replace('/', '-') + '_' + nn + '.pdf';
+        filename = 'Boleto_' + faturaNameSafe + '_' + nn + '.pdf';
       }
 
-      // Criar attachment no Odoo
-      await createAttachment(client, odooConfig.db, uid, odooConfig.password, recordId, pdfB64, filename);
-      attachments++;
+      try {
+        await createAttachment(client, odooConfig.db, uid, odooConfig.password, recordId, pdfB64, filename);
+        attachments++;
+      } catch (attachErr) {
+        console.error('[ODOO-PUSH] Erro ao criar attachment', filename + ':', attachErr.message);
+      }
     }
 
     // Postar mensagem no chatter com resumo
@@ -191,19 +224,26 @@ async function pushBoletosToOdoo(faturaName, boletos) {
         htmlParts.push('<p>Valor: R$ ' + vd + ' | Venc: ' + vc + ' | NN: ' + nn + '</p>');
       }
       htmlParts.push('<p>Linha Digitavel: ' + ld + '</p>');
-      htmlParts.push('<p>PIX: ' + pix + '</p><br/>');
+      htmlParts.push('<p>PIX Copia e Cola: ' + pix + '</p><br/>');
     }
 
-    htmlParts.push('<p>PDF(s) anexado(s) nesta fatura.</p>');
+    if (attachments > 0) {
+      htmlParts.push('<p>PDF(s) anexado(s) nesta fatura.</p>');
+    } else {
+      htmlParts.push('<p><b>ATENCAO:</b> Nenhum PDF foi anexado. Verifique os logs do middleware.</p>');
+    }
 
-    await postChatterMessage(client, odooConfig.db, uid, odooConfig.password, recordId, htmlParts.join(''));
+    try {
+      await postChatterMessage(client, odooConfig.db, uid, odooConfig.password, recordId, htmlParts.join(''));
+    } catch (msgErr) {
+      console.warn('[ODOO-PUSH] Erro ao postar no chatter:', msgErr.message);
+    }
 
-    console.log('[ODOO-PUSH] === PUSH COMPLETO: ' + attachments + ' PDFs anexados na fatura ' + faturaName + ' (ID: ' + recordId + ') ===');
-    return { pushed: true, attachments: attachments, record_id: recordId };
+    console.log('[ODOO-PUSH] === PUSH COMPLETO: ' + attachments + '/' + boletos.length + ' PDFs anexados na fatura ' + (faturaName || 'ID:' + recordId) + ' ===');
+    return { pushed: attachments > 0, attachments: attachments, record_id: recordId };
 
   } catch (err) {
     console.error('[ODOO-PUSH] Erro no push:', err.message);
-    // Nao propagar erro - boletos foram emitidos, push e bonus
     return { pushed: false, reason: err.message };
   }
 }
