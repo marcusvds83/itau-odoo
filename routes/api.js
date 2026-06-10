@@ -13,7 +13,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticateApiKey } = require('../middleware/auth');
 const { emitirBoleto, parseFormaPagamento } = require('../services/itau-boleto');
-const { storeBoleto } = require('../services/pdf-boleto');
+const { storeBoleto, generatePdf } = require('../services/pdf-boleto');
 
 /** Reference to boleto routes for txid mapping */
 var boletoRoutesRef = null;
@@ -171,6 +171,145 @@ router.post('/pagar', authenticateApiKey, async function(req, res) {
   } catch (e) {
     console.error('[API] ERRO:', e.message);
     res.json({ success: false, message: e.message });
+  }
+});
+
+/**
+ * POST /api/gerar
+ * =============================================
+ * Endpoint simplificado para Odoo Server Actions.
+ * Odoo Online bloqueia "import" no safe_eval, entao:
+ * - Aceita form-urlencoded (padrao url_open do Odoo)
+ * - Retorna texto plano (sem JSON) com PDFs em base64
+ * - Odoo nao precisa de import requests, import base64, import json
+ *
+ * Formato da resposta:
+ *   OK|<total_parcelas>
+ *   NN=<nosso_numero>|TXID=<txid>|VD=<valor>|VC=<vencimento>|LD=<linha_digitavel>|PIX=<pix_copia_cola>|B64=<pdf_base64>
+ *   ...
+ *   (ou ERRO|<mensagem>)
+ * =============================================
+ */
+router.post('/gerar', async function(req, res) {
+  try {
+    var formaPag = req.body.forma_pagamento || '';
+    var fatName = req.body.fatura_name || '';
+    var fatValor = parseFloat(req.body.fatura_valor) || 0;
+    var fatVenc = req.body.fatura_vencimento || '';
+    var pagNome = req.body.pagador_nome || '';
+    var pagCpf = req.body.pagador_cpf || '';
+    var pagStreet = req.body.pagador_street || '';
+    var pagCity = req.body.pagador_city || '';
+    var pagState = req.body.pagador_state || '';
+    var pagZip = req.body.pagador_zip || '';
+
+    console.log('[API/GERAR] === NOVA REQUISICAO (Odoo Server Action) ===');
+    console.log('[API/GERAR] Forma pagamento:', formaPag);
+    console.log('[API/GERAR] Fatura:', fatName, '| Valor: R$', fatValor.toFixed(2));
+
+    var plano = parseFormaPagamento(formaPag);
+    if (plano.tipo !== 'boleto' || plano.parcelas.length === 0) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.send('ERRO|Forma de pagamento nao suportada: ' + formaPag);
+      return;
+    }
+
+    var basePayload = {
+      cpfCnpjPagador: pagCpf,
+      nomePagador: pagNome,
+      numeroPedido: fatName,
+      dataVencimento: fatVenc,
+      logradouro: pagStreet,
+      cidade: pagCity,
+      estado: pagState,
+      cep: pagZip
+    };
+
+    var totalP = plano.parcelas.length;
+    var lines = ['OK|' + totalP];
+
+    console.log('[API/GERAR] Emitindo', totalP, 'boleto(s) com PDF...');
+
+    for (var i = 0; i < totalP; i++) {
+      var parc = plano.parcelas[i];
+      var valorParc = Math.round((fatValor * parc.valor_pct / 100) * 100) / 100;
+      if (i === totalP - 1) {
+        var soma = 0;
+        for (var j = 0; j < totalP - 1; j++) {
+          soma += Math.round((fatValor * plano.parcelas[j].valor_pct / 100) * 100) / 100;
+        }
+        valorParc = Math.round((fatValor - soma) * 100) / 100;
+      }
+
+      var dataVenc = calcDataVenc(fatVenc, parc.dias);
+      var pPayload = Object.assign({}, basePayload);
+      pPayload.valor = valorParc;
+      pPayload.dataVencimento = dataVenc;
+      pPayload.numeroPedido = fatName + (totalP > 1 ? '-P' + parc.numero : '');
+
+      console.log('[API/GERAR]   Parcela ' + parc.numero + '/' + totalP + ': R$ ' + valorParc.toFixed(2) + ' | Venc: ' + dataVenc);
+
+      var resultado = await emitirBoleto(pPayload);
+      var dados = (resultado.dados && resultado.dados.data) ? resultado.dados.data : {};
+      var ind = (dados.dado_boleto && dados.dado_boleto.dados_individuais_boleto && dados.dado_boleto.dados_individuais_boleto[0]) || {};
+      var qr = dados.dados_qrcode || {};
+      var txid = qr.txid || ('BL' + Date.now() + '-' + parc.numero);
+      var nossoNumero = ind.numero_nosso_numero || '';
+
+      // Store in memory for PDF generation
+      storeBoleto(txid, {
+        txid: txid,
+        nosso_numero: nossoNumero,
+        linha_digitavel: ind.numero_linha_digitavel || '',
+        codigo_barras: ind.codigo_barras || '',
+        data_vencimento: ind.data_vencimento || dataVenc,
+        data_emissao: dados.dado_boleto ? dados.dado_boleto.data_emissao : '',
+        valor_titulo: ind.valor_titulo || '',
+        pix_copia_cola: qr.emv || '',
+        qrcode_base64: qr.base64 || '',
+        nome_pagador: pagNome,
+        cpf_cnpj_pagador: pagCpf,
+        logradouro: pagStreet,
+        cidade: pagCity,
+        estado: pagState,
+        cep: pagZip,
+        seu_numero: pPayload.numeroPedido,
+        parcela: parc.numero,
+        total_parcelas: totalP
+      });
+
+      // Save txid mapping
+      if (nossoNumero && boletoRoutesRef && boletoRoutesRef.setTxidMapping) {
+        boletoRoutesRef.setTxidMapping(txid, nossoNumero);
+      }
+
+      // Generate PDF buffer and convert to base64
+      var pdfBuf = await generatePdf(txid);
+      var pdfB64 = pdfBuf.toString('base64');
+
+      var vc = parseInt(String(ind.valor_titulo || '0'), 10);
+
+      lines.push(
+        'NN=' + nossoNumero +
+        '|TXID=' + txid +
+        '|VD=' + (vc / 100).toFixed(2) +
+        '|VC=' + (ind.data_vencimento || dataVenc) +
+        '|LD=' + (ind.numero_linha_digitavel || '') +
+        '|PIX=' + (qr.emv || '') +
+        '|B64=' + pdfB64
+      );
+
+      console.log('[API/GERAR]   Parcela ' + parc.numero + ' OK: NN=' + nossoNumero + ' PDF=' + (pdfB64.length / 1024).toFixed(0) + 'KB');
+    }
+
+    console.log('[API/GERAR] === ' + totalP + ' BOLETO(S) EMITIDO(S) COM PDF ===');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.send(lines.join('\n'));
+
+  } catch (e) {
+    console.error('[API/GERAR] ERRO:', e.message);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.send('ERRO|' + e.message);
   }
 });
 
