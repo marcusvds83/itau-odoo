@@ -34,25 +34,28 @@ function formatarValorItau(valor) {
 }
 
 /**
- * Retorna data atual no formato YYYY-MM-DD
+ * Retorna data atual no formato YYYY-MM-DD (horario de Brasilia UTC-3)
+ * Render usa UTC; Itau valida no horario do Brasil.
+ * Se UTC ja virou o dia seguinte, subtrai 3h para ficar em Brasilia.
  */
 function getDataHoje() {
-  const d = new Date();
-  const ano = d.getFullYear();
-  const mes = String(d.getMonth() + 1).padStart(2, '0');
-  const dia = String(d.getDate()).padStart(2, '0');
+  var d = new Date(Date.now() - 3 * 3600000); // UTC-3 (Brasilia)
+  var ano = d.getUTCFullYear();
+  var mes = String(d.getUTCMonth() + 1).padStart(2, '0');
+  var dia = String(d.getUTCDate()).padStart(2, '0');
+  console.log('[BOLETO] Data emissao (Brasilia):', ano + '-' + mes + '-' + dia);
   return ano + '-' + mes + '-' + dia;
 }
 
 /**
- * Calcula data de vencimento (+dias a partir de hoje)
+ * Calcula data de vencimento (+dias a partir de hoje, horario Brasilia)
  */
 function calcularDataVencimento(dias) {
-  const d = new Date();
-  d.setDate(d.getDate() + dias);
-  const ano = d.getFullYear();
-  const mes = String(d.getMonth() + 1).padStart(2, '0');
-  const dia = String(d.getDate()).padStart(2, '0');
+  var d = new Date(Date.now() - 3 * 3600000); // UTC-3 (Brasilia)
+  d.setUTCDate(d.getUTCDate() + dias);
+  var ano = d.getUTCFullYear();
+  var mes = String(d.getUTCMonth() + 1).padStart(2, '0');
+  var dia = String(d.getUTCDate()).padStart(2, '0');
   return ano + '-' + mes + '-' + dia;
 }
 
