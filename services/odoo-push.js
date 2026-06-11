@@ -184,7 +184,6 @@ async function pushBoletosToOdoo(pushData) {
         console.log('[ODOO-PUSH]   Nota interna criada, msg ID:', msgId);
 
         // 2. Criar attachment vinculado a MENSAGEM (nao a fatura)
-        //    Assim nao aparece na aba Documentos do lado direito
         var attachId = await executeKw(client, odooConfig.db, uid, odooConfig.password, 'ir.attachment', 'create', [{
           name: filename,
           datas: pdfB64,
@@ -194,7 +193,7 @@ async function pushBoletosToOdoo(pushData) {
         }]);
         console.log('[ODOO-PUSH]   Attachment OK:', filename, 'ID:', attachId);
 
-        // 3. Amar attachment a mensagem
+        // 3. Vincular attachment a mensagem
         await executeKw(client, odooConfig.db, uid, odooConfig.password, 'mail.message', 'write', [[msgId], { attachment_ids: [[6, 0, [attachId]]] }]);
         console.log('[ODOO-PUSH]   Nota interna OK - boleto', (i + 1));
         totalAttachments++;
