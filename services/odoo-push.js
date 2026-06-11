@@ -164,17 +164,7 @@ async function pushBoletosToOdoo(pushData) {
       }
 
       try {
-        // 1. Criar attachment
-        var attachId = await executeKw(client, odooConfig.db, uid, odooConfig.password, 'ir.attachment', 'create', [{
-          name: filename,
-          datas: pdfB64,
-          res_model: 'account.move',
-          res_id: recordId,
-          mimetype: 'application/pdf',
-        }]);
-        console.log('[ODOO-PUSH]   Attachment OK:', filename, 'ID:', attachId);
-
-        // 2. Criar nota interna com PDF amarrado
+        // 1. Criar nota interna PRIMEIRO (sem attachment)
         var htmlBody = '<b>' + (t > 1 ? 'Boleto Parcela ' + p + '/' + t : 'Boleto') + '</b><br/>';
         htmlBody += 'Nosso Numero: ' + nn + '<br/>';
         htmlBody += 'Valor: R$ ' + vd + '<br/>';
@@ -184,14 +174,28 @@ async function pushBoletosToOdoo(pushData) {
           htmlBody += 'PIX Copia e Cola: ' + pix;
         }
 
-        await executeKw(client, odooConfig.db, uid, odooConfig.password, 'mail.message', 'create', [{
+        var msgId = await executeKw(client, odooConfig.db, uid, odooConfig.password, 'mail.message', 'create', [{
           model: 'account.move',
           res_id: recordId,
           body: htmlBody,
           message_type: 'comment',
           subtype_xmlid: 'mail.mt_note',
-          attachment_ids: [[6, 0, [attachId]]],
         }]);
+        console.log('[ODOO-PUSH]   Nota interna criada, msg ID:', msgId);
+
+        // 2. Criar attachment vinculado a MENSAGEM (nao a fatura)
+        //    Assim nao aparece na aba Documentos do lado direito
+        var attachId = await executeKw(client, odooConfig.db, uid, odooConfig.password, 'ir.attachment', 'create', [{
+          name: filename,
+          datas: pdfB64,
+          res_model: 'mail.message',
+          res_id: msgId,
+          mimetype: 'application/pdf',
+        }]);
+        console.log('[ODOO-PUSH]   Attachment OK:', filename, 'ID:', attachId);
+
+        // 3. Amar attachment a mensagem
+        await executeKw(client, odooConfig.db, uid, odooConfig.password, 'mail.message', 'write', [[msgId], { attachment_ids: [[6, 0, [attachId]]] }]);
         console.log('[ODOO-PUSH]   Nota interna OK - boleto', (i + 1));
         totalAttachments++;
 
