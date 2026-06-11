@@ -1,11 +1,12 @@
 /**
- * services/odoo-push.js - v6.9.6
+ * services/odoo-push.js - v7.0.2
  * =============================================
  * Push de PDFs de boletos para Odoo via XML-RPC
  * - Usa faturaId (record.id) diretamente - SEMPRE funciona, mesmo rascunho
  * - Cria ir.attachment com PDF base64
  * - Posta NOTA INTERNA no chatter com PDF anexado (mail.mt_note)
  * - Cada boleto: 1 attachment + 1 nota com detalhes
+ * - Grava campos x_studio_* na fatura (situacao, tipo_pagamento, pix, nn, link)
  *
  * ENV VARS (Render):
  *   ODOO_URL, ODOO_DB, ODOO_USER, ODOO_PASSWORD, ODOO_PUSH_ENABLED
@@ -198,6 +199,58 @@ async function pushBoletosToOdoo(pushData) {
       } catch (err) {
         console.error('[ODOO-PUSH]   ERRO boleto', (i + 1) + ':', err.message);
       }
+    }
+
+    // === GRAVAR CAMPOS x_studio_* NA FATURA ===
+    // Preenche os campos customizados do Odoo com dados dos boletos emitidos
+    try {
+      var bol0 = boletos[0] || {};
+      var nnList = [];
+      var pixList = [];
+      var linkList = [];
+      for (var i = 0; i < boletos.length; i++) {
+        if (boletos[i].nosso_numero) nnList.push(boletos[i].nosso_numero);
+        if (boletos[i].pix_copia_cola) pixList.push(boletos[i].pix_copia_cola);
+        if (boletos[i].pdf_url_txid) linkList.push(boletos[i].pdf_url_txid);
+        if (boletos[i].pdf_url_nn) linkList.push(boletos[i].pdf_url_nn);
+      }
+
+      var camposWrite = {};
+
+      // x_studio_itau_situacao
+      if (totalAttachments > 0) {
+        camposWrite['x_studio_itau_situacao'] = 'EMITIDO';
+      } else {
+        camposWrite['x_studio_itau_situacao'] = 'ERRO';
+      }
+
+      // x_studio_itau_tipo_pagamento
+      camposWrite['x_studio_itau_tipo_pagamento'] = 'BOLETO';
+
+      // x_studio_itau_pix_copia_cola
+      if (pixList.length > 0) {
+        camposWrite['x_studio_itau_pix_copia_cola'] = pixList.join(' | ');
+      }
+
+      // x_studio_itau_nosso_numero
+      if (nnList.length > 0) {
+        camposWrite['x_studio_itau_nosso_numero'] = nnList.join(' | ');
+      }
+
+      // x_studio_itau_link_status
+      if (linkList.length > 0) {
+        camposWrite['x_studio_itau_link_status'] = linkList[0]; // Link do primeiro boleto
+      }
+
+      var keysWrite = Object.keys(camposWrite);
+      if (keysWrite.length > 0) {
+        console.log('[ODOO-PUSH] Gravando campos x_studio_*:', keysWrite.join(', '));
+        await executeKw(client, odooConfig.db, uid, odooConfig.password, 'account.move', 'write', [[recordId], camposWrite]);
+        console.log('[ODOO-PUSH] Campos x_studio_* gravados com sucesso na fatura', recordId);
+      }
+    } catch (fieldsErr) {
+      console.error('[ODOO-PUSH] Erro ao gravar campos x_studio_*:', fieldsErr.message);
+      // Nao falhar o push inteiro por causa dos campos
     }
 
     console.log('[ODOO-PUSH] === PUSH COMPLETO: ' + totalAttachments + '/' + boletos.length + ' PDFs na fatura ' + faturaNameSafe + ' (ID: ' + recordId + ') ===');
